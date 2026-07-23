@@ -6,7 +6,7 @@
 <title>Bebi Field Ledger</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="assets/chart.umd.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
@@ -202,6 +202,8 @@
   }
   .toggle-row button.active.committed{background:rgba(217,164,65,0.2); color:var(--amber); border-color:var(--amber);}
   .toggle-row button.active.actual{background:rgba(146,168,90,0.2); color:var(--leaf); border-color:var(--leaf);}
+  .toggle-row button.active.issued{background:rgba(217,164,65,0.2); color:var(--amber); border-color:var(--amber);}
+  .toggle-row button.active.received{background:rgba(146,168,90,0.2); color:var(--leaf); border-color:var(--leaf);}
   .sheet-actions{display:flex; gap:10px; margin-top:6px;}
   .btn{
     flex:1; padding:13px; border-radius:10px; border:none; font-weight:700; font-size:14px;
@@ -349,6 +351,12 @@ function defaultState(){
       {id:"Tractor-01", type:"Wheeled Tractor + Implements", hoursPerDay:8},
       {id:"Tractor-06", type:"Wheeled Tractor + Implements", hoursPerDay:8}
     ],
+    stockItems: [
+      {name:"NPK Fertilizer", category:"Fertilizer", unit:"bags"},
+      {name:"Cassava Stem Cuttings", category:"Seedling", unit:"bundles"},
+      {name:"Pre-emergence Herbicide", category:"Herbicide", unit:"bottles"},
+      {name:"Post-emergence Herbicide", category:"Herbicide", unit:"cartons"}
+    ],
     txnTypes: ["Committed","Actual"],
     paymentSources: ["Company Account","Project Cash Advance","Petty Cash","Bank Transfer","Contractor Direct Payment"],
     txnStatuses: ["Approved","Pending Approval","Retired","Pending Retirement","Rejected"],
@@ -385,6 +393,8 @@ function defaultState(){
       {id:"MCH-0002", date:"2026-07-22", machineId:"Tractor-06", operation:"Ploughing", hoursWorked:3.23, idle:5, breakdown:3, remarks:"Battery Issues and Alternator"}
     ],
     reports: [],
+    stockLog: [],
+    budgetVariations: [],
     asOfDate: todayStr(),
     configUpdatedAt: Date.now()
   };
@@ -887,8 +897,10 @@ function renderFieldOps(){
   const seg = `<div class="segment">
     <button class="${fieldOpsSub==='diesel'?'active':''}" onclick="setFieldOpsSub('diesel')">Diesel</button>
     <button class="${fieldOpsSub==='machine'?'active':''}" onclick="setFieldOpsSub('machine')">Machines</button>
+    <button class="${fieldOpsSub==='stock'?'active':''}" onclick="setFieldOpsSub('stock')">Stock</button>
   </div>`;
-  return seg + (fieldOpsSub==='diesel' ? renderDieselTab() : renderMachineTab());
+  const tab = fieldOpsSub==='diesel' ? renderDieselTab() : fieldOpsSub==='machine' ? renderMachineTab() : renderStockTab();
+  return seg + tab;
 }
 function setFieldOpsSub(s){ fieldOpsSub = s; render(); }
 
@@ -993,6 +1005,78 @@ function saveMachine(){
   const rec = {id:editing.id||uid(), date:val('f_date'), machineId:val('f_machineId'), operation:val('f_operation'),
     hoursWorked:Number(val('f_hoursWorked'))||0, idle:Number(val('f_idle'))||0, breakdown:Number(val('f_breakdown'))||0, remarks:val('f_remarks')};
   upsert('machineLog', rec);
+  closeSheet(); saveState(); render();
+}
+
+/* ================= STOCK / INVENTORY ================= */
+function calcStock(){
+  return state.stockItems.map(item=>{
+    const rows = active(state.stockLog).filter(r=>r.itemName===item.name);
+    const received = rows.filter(r=>r.movement==="Received").reduce((s,r)=>s+Number(r.quantity||0),0);
+    const issued = rows.filter(r=>r.movement==="Issued").reduce((s,r)=>s+Number(r.quantity||0),0);
+    return {...item, received, issued, balance: received-issued};
+  });
+}
+function renderStockTab(){
+  if(!state.stockItems.length){
+    return emptyState("📦","No stock items set up yet","Add fertilizer, seedling, or herbicide items in Settings first.");
+  }
+  const stock = calcStock();
+  const byCategory = {};
+  stock.forEach(s=>{ (byCategory[s.category]=byCategory[s.category]||[]).push(s); });
+  const summary = `<div class="card"><div class="card-title">Current stock balance</div>` +
+    Object.keys(byCategory).map(cat=>`
+      <div style="margin-bottom:10px;">
+        <div style="font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:0.6px; margin-bottom:6px;">${esc(cat)}</div>
+        <div class="stat-grid">
+          ${byCategory[cat].map(s=>`
+            <div class="stat">
+              <div class="label">${esc(s.name)}</div>
+              <div class="value small">${fmtNum(s.balance,s.balance%1===0?0:1)} ${esc(s.unit)} ${s.balance<=0?'<span class="chip critical">Out</span>':''}</div>
+            </div>`).join("")}
+        </div>
+      </div>`).join("") + `</div>`;
+  const rows = [...active(state.stockLog)].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
+  const body = rows.length ? rows.map(r=>`
+    <div class="entry" onclick="openStockForm('${r.id}')">
+      <div class="entry-top">
+        <div><div class="entry-date">${fmtDate(r.date)}</div><div class="entry-title">${esc(r.itemName)}</div></div>
+        <div class="entry-amount">${r.movement==='Issued'?'-':'+'}${fmtNum(r.quantity,r.quantity%1===0?0:1)}</div>
+      </div>
+      <div class="entry-meta">
+        <span class="chip ${r.movement==='Received'?'actual':'committed'}">${r.movement}</span>
+        ${r.purpose?`<span>${esc(r.purpose)}</span>`:""}
+      </div>
+    </div>`).join("") : emptyState("📦","No stock movements yet","Log deliveries and usage of fertilizer, seedlings and herbicides here.");
+  return `${summary}${body}${fab("Log stock movement","openStockForm()")}`;
+}
+function openStockForm(id){
+  editing = {type:"stock", id:id||null};
+  const r = id ? state.stockLog.find(x=>x.id===id) : {date:state.asOfDate, itemName:state.stockItems[0].name, movement:"Received", quantity:"", purpose:"", remarks:""};
+  const itemOpts = state.stockItems.map(it=>`<option value="${esc(it.name)}" ${it.name===r.itemName?'selected':''}>${esc(it.name)} (${esc(it.unit)})</option>`).join("");
+  openSheet(`
+    <h2>${id?"Edit":"Log"} Stock Movement</h2>
+    <div class="field"><label>Date</label><input type="date" id="f_date" value="${r.date}"></div>
+    <div class="field"><label>Item</label><select id="f_itemName">${itemOpts}</select></div>
+    <div class="field"><label>Movement</label>
+      <div class="toggle-row">
+        <button type="button" class="${r.movement==='Received'?'active received':''}" onclick="pick('f_movement','Received',this)">Received</button>
+        <button type="button" class="${r.movement==='Issued'?'active issued':''}" onclick="pick('f_movement','Issued',this)">Issued</button>
+      </div>
+      <input type="hidden" id="f_movement" value="${r.movement}">
+    </div>
+    <div class="field"><label>Quantity</label><input type="number" inputmode="decimal" id="f_quantity" value="${r.quantity}"></div>
+    <div class="field"><label>Purpose / Source (optional)</label><input id="f_purpose" value="${esc(r.purpose)}" placeholder="e.g. Applied to Ploughed block, or Delivery from XYZ Agro"></div>
+    <div class="field"><label>Remarks</label><textarea id="f_remarks">${esc(r.remarks)}</textarea></div>
+    <div class="sheet-actions">
+      ${id?`<button class="btn btn-danger" onclick="deleteEntry('stockLog','${id}')">Delete</button>`:""}
+      <button class="btn btn-primary" onclick="saveStock()">Save</button>
+    </div>
+  `);
+}
+function saveStock(){
+  const rec = {id:editing.id||uid(), date:val('f_date'), itemName:val('f_itemName'), movement:val('f_movement')||'Received', quantity:Number(val('f_quantity'))||0, purpose:val('f_purpose'), remarks:val('f_remarks')};
+  upsert('stockLog', rec);
   closeSheet(); saveState(); render();
 }
 
@@ -1360,6 +1444,55 @@ function emailReport(id){
 }
 
 /* ================= SETTINGS ================= */
+function renderBudgetVariationsList(){
+  const list = [...active(state.budgetVariations)].sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  if(!list.length) return `<div class="note">No budget variations recorded yet.</div>`;
+  return list.map(v=>`
+    <div style="background:var(--surface-2); border-radius:9px; padding:10px; margin-bottom:8px;">
+      <div style="display:flex; justify-content:space-between;">
+        <b style="font-size:12.5px;">${esc(v.costHead)}</b>
+        <span class="mono" style="font-size:11px; color:var(--dim);">${fmtDate(v.date)}</span>
+      </div>
+      <div style="font-size:12px; margin-top:3px;">${fmtN(v.previousBudget)} &rarr; ${fmtN(v.newBudget)} (${v.changeAmount>=0?'+':''}${fmtN(v.changeAmount)})</div>
+      ${v.reason?`<div style="font-size:11.5px; color:var(--dim); margin-top:3px;">${esc(v.reason)}</div>`:""}
+      ${v.approvedBy?`<div style="font-size:11px; color:var(--dim); margin-top:2px;">Approved by ${esc(v.approvedBy)}</div>`:""}
+    </div>`).join("");
+}
+function openBudgetVariationForm(){
+  if(!state.costHeads.length){ alert("Add a cost head first."); return; }
+  const chOpts = state.costHeads.map(c=>`<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
+  const first = state.costHeads[0];
+  openSheet(`
+    <h2>Record Budget Variation</h2>
+    <div class="field"><label>Cost Head</label><select id="bv_costHead" onchange="bvUpdateCurrent()">${chOpts}</select></div>
+    <div class="field"><label>Current Approved Budget</label><input id="bv_current" value="${fmtN(first.budget)}" disabled></div>
+    <div class="field"><label>New Approved Budget (₦)</label><input type="number" inputmode="decimal" id="bv_newBudget" value="${first.budget}"></div>
+    <div class="field"><label>Date</label><input type="date" id="bv_date" value="${state.asOfDate}"></div>
+    <div class="field"><label>Reason for Variation</label><textarea id="bv_reason" placeholder="e.g. Additional funds approved for diesel due to price hike"></textarea></div>
+    <div class="field"><label>Approved By</label><input id="bv_approvedBy" value="${esc(state.project.manager)}"></div>
+    <div class="sheet-actions">
+      <button class="btn btn-ghost" onclick="openSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBudgetVariation()">Save Variation</button>
+    </div>
+  `);
+}
+function bvUpdateCurrent(){
+  const ch = state.costHeads.find(c=>c.name===val('bv_costHead'));
+  document.getElementById('bv_current').value = fmtN(ch?ch.budget:0);
+  document.getElementById('bv_newBudget').value = ch?ch.budget:0;
+}
+function saveBudgetVariation(){
+  const ch = state.costHeads.find(c=>c.name===val('bv_costHead'));
+  if(!ch) return;
+  const previousBudget = ch.budget;
+  const newBudget = Number(val('bv_newBudget'))||0;
+  const rec = {id:uid(), costHead:ch.name, date:val('bv_date'), previousBudget, newBudget,
+    changeAmount: newBudget-previousBudget, reason:val('bv_reason'), approvedBy:val('bv_approvedBy')};
+  upsert('budgetVariations', rec);
+  ch.budget = newBudget;
+  state.configUpdatedAt = Date.now();
+  saveState(); openSettings();
+}
 function openSettings(){
   settingsSheetOpen = true;
   const p = state.project;
@@ -1390,6 +1523,26 @@ function openSettings(){
           <button class="rm" onclick="this.parentElement.remove()">✕</button>
         </div>`).join("")}</div>
       <button class="add-row-btn" onclick="addRow('chRows','<input data-ch-name placeholder=\\'Cost head\\'><input data-ch-budget type=\\'number\\' placeholder=\\'Budget ₦\\' style=\\'max-width:120px;\\'>')">+ Add cost head</button>
+      <div class="note">Edit a budget number above and Save Settings for a quick correction. To keep an audit trail of variations/adjustments (extra funds approved, reason, who approved it), use the section below instead.</div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Budget Variations / Adjustments</h3>
+      <div id="bvList">${renderBudgetVariationsList()}</div>
+      <button class="add-row-btn" style="margin-top:8px;" onclick="openBudgetVariationForm()">+ Record variation</button>
+    </div>
+
+    <div class="settings-section">
+      <h3>Stock Items (fertilizer, seedlings, herbicides, etc.)</h3>
+      <div id="stockItemRows">${state.stockItems.map(it=>`
+        <div class="list-row">
+          <input data-si-name value="${esc(it.name)}" placeholder="Item name">
+          <input data-si-category value="${esc(it.category)}" placeholder="Category" style="max-width:110px;">
+          <input data-si-unit value="${esc(it.unit)}" placeholder="Unit" style="max-width:90px;">
+          <button class="rm" onclick="this.parentElement.remove()">✕</button>
+        </div>`).join("")}</div>
+      <button class="add-row-btn" onclick="addRow('stockItemRows','<input data-si-name placeholder=\\'Item name\\'><input data-si-category placeholder=\\'Category\\' style=\\'max-width:110px;\\'><input data-si-unit placeholder=\\'Unit\\' style=\\'max-width:90px;\\'>')">+ Add stock item</button>
+      <div class="note">Remember to also click Save Settings below after adding or removing stock items.</div>
     </div>
 
     <div class="settings-section">
@@ -1467,6 +1620,11 @@ function saveSettings(){
     target: Number(row.querySelector('[data-op-target]').value)||0,
     rate: null
   })).filter(o=>o.name);
+  state.stockItems = [...document.querySelectorAll('#stockItemRows .list-row')].map(row=>({
+    name: row.querySelector('[data-si-name]').value.trim(),
+    category: row.querySelector('[data-si-category]').value.trim() || "Other",
+    unit: row.querySelector('[data-si-unit]').value.trim() || "units"
+  })).filter(s=>s.name);
   state.thresholds.watch = (Number(val('s_watch'))||60)/100;
   state.thresholds.critical = (Number(val('s_critical'))||85)/100;
   state.thresholds.overdueDays = Number(val('s_overdueDays'))||14;
@@ -1591,11 +1749,11 @@ function mergeArraysById(localArr, remoteArr){
 function mergeStates(local, remote){
   if(!remote) return local;
   const merged = {...local};
-  ["expenses","productivity","advances","dieselLog","machineLog","reports"].forEach(key=>{
+  ["expenses","productivity","advances","dieselLog","machineLog","reports","stockLog","budgetVariations"].forEach(key=>{
     merged[key] = mergeArraysById(local[key]||[], remote[key]||[]);
   });
   if((remote.configUpdatedAt||0) > (local.configUpdatedAt||0)){
-    ["project","costHeads","operations","thresholds","diesel","machines","txnTypes","paymentSources","txnStatuses"].forEach(key=>{
+    ["project","costHeads","operations","thresholds","diesel","machines","stockItems","txnTypes","paymentSources","txnStatuses"].forEach(key=>{
       merged[key] = remote[key];
     });
     merged.configUpdatedAt = remote.configUpdatedAt;
@@ -1662,8 +1820,13 @@ function openSheet(html){
 function closeSheet(){ document.getElementById('sheetOverlay').style.display = 'none'; editing={type:null,id:null}; settingsSheetOpen=false; }
 
 /* ================= BOOT ================= */
+function normalizeState(s){
+  const d = defaultState();
+  Object.keys(d).forEach(k=>{ if(s[k]===undefined) s[k] = d[k]; });
+  return s;
+}
 (async function init(){
-  state = await loadState();
+  state = normalizeState(await loadState());
   if(!state.asOfDate) state.asOfDate = todayStr();
   setTab('dashboard');
   setTimeout(driveTryAutoConnect, 400);
