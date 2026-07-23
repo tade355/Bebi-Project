@@ -224,6 +224,33 @@
   .loading{display:flex; align-items:center; justify-content:center; height:60vh; color:var(--dim); font-size:13px;}
   .note{font-size:11.5px; color:var(--dim); line-height:1.5; margin-top:2px;}
   a.linklike{color:var(--clay);}
+
+  /* ---------- report documents ---------- */
+  .report-doc{background:var(--surface-2); border-radius:10px; padding:14px; max-height:52vh; overflow-y:auto;}
+  .report-doc h3{font-size:12.5px; text-transform:uppercase; letter-spacing:0.8px; color:var(--clay); margin:14px 0 6px;}
+  .report-doc h3:first-of-type{margin-top:0;}
+  .report-doc p{margin:4px 0 10px; font-size:12.5px; line-height:1.55; color:var(--parchment);}
+  .report-doc table{width:100%; border-collapse:collapse; margin:8px 0; font-size:11.5px;}
+  .report-doc th,.report-doc td{border:1px solid var(--line); padding:5px 7px; text-align:left; color:var(--parchment);}
+  .report-doc .doc-header{display:flex; align-items:center; gap:10px; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid var(--line);}
+  .report-doc .doc-header img{width:40px; height:40px; border-radius:8px; object-fit:cover; background:#fff; flex:none;}
+  .report-doc .doc-header h1{font-size:15px; line-height:1.3;}
+
+  #printArea{display:none;}
+  @media print{
+    body *{visibility:hidden;}
+    #printArea, #printArea *{visibility:visible;}
+    #printArea{
+      display:block; position:absolute; left:0; top:0; width:100%;
+      background:#fff; color:#111; padding:28px;
+      font-family: Georgia, 'Times New Roman', serif;
+    }
+    #printArea .report-doc{max-height:none; overflow:visible; background:none; padding:0;}
+    #printArea h3{color:#111; border-bottom:1px solid #333; padding-bottom:3px;}
+    #printArea p, #printArea td, #printArea th{color:#111;}
+    #printArea table, #printArea th, #printArea td{border-color:#333;}
+    #printArea .doc-header{border-color:#333;}
+  }
 </style>
 </head>
 <body>
@@ -252,7 +279,10 @@
   <button data-tab="output" onclick="setTab('output')"><span class="ic">&#127807;</span>Output</button>
   <button data-tab="fieldops" onclick="setTab('fieldops')"><span class="ic">&#9981;</span>Field Ops</button>
   <button data-tab="advances" onclick="setTab('advances')"><span class="ic">&#128179;</span>Advances</button>
+  <button data-tab="reports" onclick="setTab('reports')"><span class="ic">&#128196;</span>Reports</button>
 </div>
+
+<div id="printArea"></div>
 
 <div id="sheetOverlay" onclick="if(event.target===this) closeSheet()">
   <div id="sheet"></div>
@@ -354,6 +384,7 @@ function defaultState(){
       {id:"MCH-0001", date:"2026-07-21", machineId:"Tractor-06", operation:"Ploughing", hoursWorked:6.67, idle:2, breakdown:1, remarks:"Battery Issues"},
       {id:"MCH-0002", date:"2026-07-22", machineId:"Tractor-06", operation:"Ploughing", hoursWorked:3.23, idle:5, breakdown:3, remarks:"Battery Issues and Alternator"}
     ],
+    reports: [],
     asOfDate: todayStr(),
     configUpdatedAt: Date.now()
   };
@@ -577,6 +608,7 @@ function render(){
   else if(currentTab==="output") view.innerHTML = renderOutput();
   else if(currentTab==="fieldops") view.innerHTML = renderFieldOps();
   else if(currentTab==="advances") view.innerHTML = renderAdvances();
+  else if(currentTab==="reports") view.innerHTML = renderReports();
   afterRenderHooks();
 }
 
@@ -1006,6 +1038,327 @@ function saveAdvance(){
   closeSheet(); saveState(); render();
 }
 
+/* ================= REPORTS ================= */
+function reportTypeLabel(t){ return t==="progress"?"Progress Report":t==="final"?"Final Report":"Funds / Input / Service Request"; }
+function reportTitleFor(r){
+  const f = r.fields||{};
+  if(r.type==="progress") return "Progress Report — " + fmtDate(f.reportDate||state.asOfDate);
+  if(r.type==="final") return f.reportTitle || ("Final Report — "+state.project.name);
+  return "Request: " + (f.itemDescription || f.category || "Untitled");
+}
+function renderReports(){
+  const list = [...active(state.reports)].sort((a,b)=> (b.updatedAt||0)-(a.updatedAt||0));
+  const body = list.length ? list.map(r=>{
+    const f = r.fields||{};
+    return `
+    <div class="entry" onclick="viewReport('${r.id}')">
+      <div class="entry-top">
+        <div><div class="entry-date">${fmtDate(f.reportDate||f.requestDate||todayStr())}</div><div class="entry-title">${esc(reportTitleFor(r))}</div></div>
+      </div>
+      <div class="entry-meta"><span class="chip neutral">${reportTypeLabel(r.type)}</span></div>
+    </div>`;
+  }).join("") : emptyState("📄","No reports yet","Generate a progress report, final report, or a funds/input/service request.");
+  return `${body}${fab("New report","openReportTypePicker()")}`;
+}
+function openReportTypePicker(){
+  openSheet(`
+    <h2>New Report / Memo</h2>
+    <div class="sheet-actions" style="flex-direction:column; gap:10px;">
+      <button class="btn btn-primary" onclick="openReportForm('progress')">Progress Report</button>
+      <button class="btn btn-primary" onclick="openReportForm('final')">Final Report</button>
+      <button class="btn btn-primary" onclick="openReportForm('request')">Request Funds / Inputs / Services</button>
+    </div>
+  `);
+}
+function openReportForm(type, id){
+  editing = {type:"report", id: id||null, reportType:type};
+  const r = id ? state.reports.find(x=>x.id===id) : null;
+  const f = (r&&r.fields) || {};
+  let fieldsHtml = "";
+  if(type==="progress"){
+    fieldsHtml = `
+      <div class="field"><label>Report Date</label><input type="date" id="f_reportDate" value="${f.reportDate||state.asOfDate}"></div>
+      <div class="field"><label>Initial Plans &amp; Targets</label><textarea id="f_initialPlanNotes" placeholder="What was planned for this period">${esc(f.initialPlanNotes)}</textarea></div>
+      <div class="field"><label>Variance (Reality vs Plan)</label><textarea id="f_varianceNotes" placeholder="Days spent vs planned, machine availability, etc.">${esc(f.varianceNotes)}</textarea></div>
+      <div class="field"><label>Factors Affecting Pace of Work</label><textarea id="f_factorsAffectingPace" placeholder="Weed density, tractor health, implement availability, funds, logistics cost...">${esc(f.factorsAffectingPace)}</textarea></div>
+      <div class="row2">
+        <div class="field"><label>Revenue Received (₦, if any)</label><input type="number" id="f_revenueReceived" value="${f.revenueReceived||''}"></div>
+        <div class="field"><label>Tractor Hiring Income (₦, if any)</label><input type="number" id="f_tractorHiringIncome" value="${f.tractorHiringIncome||''}"></div>
+      </div>
+      <div class="field"><label>Request for Funds / Management Support</label><textarea id="f_fundsRequestReason" placeholder="Why management should support continuation">${esc(f.fundsRequestReason)}</textarea></div>
+      <div class="field"><label>Recommendation</label><textarea id="f_recommendation">${esc(f.recommendation)}</textarea></div>
+      <div class="field"><label>Prepared By</label><input id="f_preparedBy" value="${esc(f.preparedBy||state.project.manager)}"></div>
+    `;
+  } else if(type==="final"){
+    fieldsHtml = `
+      <div class="field"><label>Report Title</label><input id="f_reportTitle" value="${esc(f.reportTitle||('REPORT ON '+state.project.name).toUpperCase())}"></div>
+      <div class="field"><label>Introduction</label><textarea id="f_introduction" placeholder="Background, who requested/commissioned the work, when it started">${esc(f.introduction)}</textarea></div>
+      <div class="field"><label>Project Scope</label><textarea id="f_scopeNotes" placeholder="Locations, operations, hectares covered">${esc(f.scopeNotes)}</textarea></div>
+      <div class="field"><label>Payment Received (notes)</label><textarea id="f_paymentReceivedNotes" placeholder="Amounts received from client/funder, review of scope, etc.">${esc(f.paymentReceivedNotes)}</textarea></div>
+      <div class="field"><label>Fund Reconciliation Notes</label><textarea id="f_fundReconciliationNotes">${esc(f.fundReconciliationNotes)}</textarea></div>
+      <div class="field"><label>Challenges &amp; Lessons Learnt</label><textarea id="f_challengesNotes">${esc(f.challengesNotes)}</textarea></div>
+      <div class="field"><label>Recommendations</label><textarea id="f_recommendationsNotes">${esc(f.recommendationsNotes)}</textarea></div>
+      <div class="field"><label>Conclusion</label><textarea id="f_conclusionNotes">${esc(f.conclusionNotes)}</textarea></div>
+      <div class="row2">
+        <div class="field"><label>Prepared By</label><input id="f_preparedBy" value="${esc(f.preparedBy||state.project.manager)}"></div>
+        <div class="field"><label>Designation</label><input id="f_preparedDesignation" value="${esc(f.preparedDesignation)}"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Checked By</label><input id="f_checkedBy" value="${esc(f.checkedBy)}"></div>
+        <div class="field"><label>Designation</label><input id="f_checkedDesignation" value="${esc(f.checkedDesignation)}"></div>
+      </div>
+      <div class="row2">
+        <div class="field"><label>Verified By</label><input id="f_verifiedBy" value="${esc(f.verifiedBy)}"></div>
+        <div class="field"><label>Designation</label><input id="f_verifiedDesignation" value="${esc(f.verifiedDesignation)}"></div>
+      </div>
+    `;
+  } else {
+    fieldsHtml = `
+      <div class="field"><label>Date</label><input type="date" id="f_requestDate" value="${f.requestDate||state.asOfDate}"></div>
+      <div class="field"><label>Category</label>
+        <select id="f_category">
+          ${["Funds","Herbicide","Fertilizer","Other Input","Service"].map(c=>`<option ${f.category===c?'selected':''}>${c}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field"><label>Item / Description</label><input id="f_itemDescription" value="${esc(f.itemDescription)}" placeholder="e.g. Glyphosate herbicide, NPK fertilizer, tractor repair service"></div>
+      <div class="row2">
+        <div class="field"><label>Quantity</label><input id="f_quantity" value="${esc(f.quantity)}" placeholder="e.g. 20"></div>
+        <div class="field"><label>Unit</label><input id="f_unit" value="${esc(f.unit)}" placeholder="e.g. litres, bags, trips"></div>
+      </div>
+      <div class="field"><label>Estimated Cost (₦, optional)</label><input type="number" id="f_amountNaira" value="${f.amountNaira||''}"></div>
+      <div class="field"><label>Urgency</label>
+        <div class="toggle-row">
+          <button type="button" class="${(f.urgency||'Normal')==='Normal'?'active actual':''}" onclick="pick('f_urgency','Normal',this)">Normal</button>
+          <button type="button" class="${f.urgency==='Urgent'?'active committed':''}" onclick="pick('f_urgency','Urgent',this)">Urgent</button>
+        </div>
+        <input type="hidden" id="f_urgency" value="${f.urgency||'Normal'}">
+      </div>
+      <div class="field"><label>Requested By</label><input id="f_requestedBy" value="${esc(f.requestedBy||state.project.manager)}"></div>
+      <div class="field"><label>Justification</label><textarea id="f_justification" placeholder="Why this is needed now">${esc(f.justification)}</textarea></div>
+    `;
+  }
+  openSheet(`
+    <h2>${id?"Edit":"New"} ${reportTypeLabel(type)}</h2>
+    ${fieldsHtml}
+    <div class="sheet-actions">
+      ${id?`<button class="btn btn-danger" onclick="deleteEntry('reports','${id}')">Delete</button>`:""}
+      <button class="btn btn-primary" onclick="saveReport()">Save</button>
+    </div>
+  `);
+}
+function saveReport(){
+  const type = editing.reportType;
+  let fields = {};
+  if(type==="progress"){
+    fields = {
+      reportDate: val('f_reportDate'), initialPlanNotes: val('f_initialPlanNotes'), varianceNotes: val('f_varianceNotes'),
+      factorsAffectingPace: val('f_factorsAffectingPace'), revenueReceived: Number(val('f_revenueReceived'))||0,
+      tractorHiringIncome: Number(val('f_tractorHiringIncome'))||0, fundsRequestReason: val('f_fundsRequestReason'),
+      recommendation: val('f_recommendation'), preparedBy: val('f_preparedBy')
+    };
+  } else if(type==="final"){
+    fields = {
+      reportTitle: val('f_reportTitle'), introduction: val('f_introduction'), scopeNotes: val('f_scopeNotes'),
+      paymentReceivedNotes: val('f_paymentReceivedNotes'), fundReconciliationNotes: val('f_fundReconciliationNotes'),
+      challengesNotes: val('f_challengesNotes'), recommendationsNotes: val('f_recommendationsNotes'), conclusionNotes: val('f_conclusionNotes'),
+      preparedBy: val('f_preparedBy'), preparedDesignation: val('f_preparedDesignation'),
+      checkedBy: val('f_checkedBy'), checkedDesignation: val('f_checkedDesignation'),
+      verifiedBy: val('f_verifiedBy'), verifiedDesignation: val('f_verifiedDesignation')
+    };
+  } else {
+    fields = {
+      requestDate: val('f_requestDate'), category: val('f_category'), itemDescription: val('f_itemDescription'),
+      quantity: val('f_quantity'), unit: val('f_unit'), amountNaira: Number(val('f_amountNaira'))||0,
+      urgency: val('f_urgency')||'Normal', requestedBy: val('f_requestedBy'), justification: val('f_justification')
+    };
+  }
+  const rec = {id: editing.id||uid(), type, fields};
+  upsert('reports', rec);
+  closeSheet(); saveState(); render();
+}
+function buildDocHeader(title, subtitle){
+  return `<div class="doc-header">
+    <img src="assets/bebi-project-logo.png" alt="">
+    <img src="assets/company-logo.png" alt="">
+    <div><h1>${esc(title)}</h1>${subtitle?`<div style="font-size:11.5px; opacity:0.75;">${esc(subtitle)}</div>`:""}</div>
+  </div>`;
+}
+function nl2br(s){ return esc(s||"—").replace(/\n/g,"<br>"); }
+function buildProgressReportHTML(r){
+  const f = r.fields||{};
+  const prod = calcProductivity();
+  const bva = calcBudgetVsActual();
+  const totals = totalsFromBVA(bva);
+  const evm = calcEVM();
+  const revenue = Number(f.revenueReceived)||0;
+  const hiring = Number(f.tractorHiringIncome)||0;
+  const expenditure = totals.actual;
+  const profitWithHiring = revenue + hiring - expenditure;
+  const profitWithoutHiring = revenue - expenditure;
+  const milestoneRows = prod.perOp.map(o=>`<tr><td>${esc(o.name)}</td><td>${o.target}</td><td>${fmtNum(o.achieved,2)}</td><td>${fmtPct(o.pct)}</td></tr>`).join("");
+  return `
+    ${buildDocHeader("PROGRESS REPORT — "+state.project.name.toUpperCase(), fmtDate(f.reportDate||state.asOfDate))}
+    <h3>1. Brief</h3>
+    <table><tr><td>Commencement Date</td><td>${fmtDate(state.project.startDate)}</td></tr>
+    <tr><td>Days Spent So Far</td><td>${evm.daysElapsed} of ${state.project.days} planned days</td></tr></table>
+    <p><b>Initial Plans &amp; Targets:</b><br>${nl2br(f.initialPlanNotes)}</p>
+    <p><b>Variance (Reality vs Plan):</b><br>${nl2br(f.varianceNotes)}</p>
+
+    <h3>2. Milestones Recorded So Far</h3>
+    <table><tr><th>Operation</th><th>Target (Ha)</th><th>Achieved (Ha)</th><th>% of Target</th></tr>${milestoneRows}</table>
+
+    <h3>3. Financial Summary &amp; Profitability</h3>
+    <table>
+      <tr><td>Total Expenditure to Date</td><td>${fmtN(expenditure)}</td></tr>
+      ${revenue?`<tr><td>Total Revenue Received</td><td>${fmtN(revenue)}</td></tr>`:""}
+      ${hiring?`<tr><td>Tractor Hiring Income</td><td>${fmtN(hiring)}</td></tr>`:""}
+      ${revenue?`<tr><td>Profitability (with tractor hiring)</td><td>${fmtN(profitWithHiring)}</td></tr>`:""}
+      ${revenue?`<tr><td>Profitability (without tractor hiring)</td><td>${fmtN(profitWithoutHiring)}</td></tr>`:""}
+    </table>
+    <p style="font-size:11px; opacity:0.7;">NB: refer to the Budget vs Actual, Diesel Sub-Ledger and Fund Retirement records in the Bebi Field Ledger app for supporting detail.</p>
+
+    <h3>4. Factors Affecting Pace of Work</h3>
+    <p>${nl2br(f.factorsAffectingPace)}</p>
+
+    <h3>5. Request for Funds &amp; Management Support for Continuation</h3>
+    <p>${nl2br(f.fundsRequestReason)}</p>
+
+    <h3>6. Recommendation</h3>
+    <p>${nl2br(f.recommendation)}</p>
+
+    <p style="margin-top:22px;">Signed,<br><br><b>${esc(f.preparedBy||state.project.manager)}</b></p>
+  `;
+}
+function buildFinalReportHTML(r){
+  const f = r.fields||{};
+  const prod = calcProductivity();
+  const bva = calcBudgetVsActual();
+  const totals = totalsFromBVA(bva);
+  const ret = calcRetirement();
+  const bvaRows = bva.map(row=>`<tr><td>${esc(row.name)}</td><td>${fmtN(row.budget)}</td><td>${fmtN(row.committed)}</td><td>${fmtN(row.actual)}</td><td>${fmtN(row.total)}</td><td>${fmtN(row.balance)}</td></tr>`).join("");
+  const prodRows = prod.perOp.map(o=>`<tr><td>${esc(o.name)}</td><td>${o.target}</td><td>${fmtNum(o.achieved,2)}</td><td>${fmtPct(o.pct)}</td></tr>`).join("");
+  const advRows = active(state.advances).length ? ret.map(a=>`<tr><td>${esc(a.releasedTo)}</td><td>${fmtN(a.amount)}</td><td>${fmtN(a.retired)}</td><td>${fmtN(a.balance)}</td><td>${esc(a.status)}</td></tr>`).join("") : `<tr><td colspan="5">No advances recorded.</td></tr>`;
+  return `
+    ${buildDocHeader(esc((f.reportTitle||('REPORT ON '+state.project.name)).toUpperCase()), fmtDate(state.asOfDate))}
+    <h3>Introduction</h3>
+    <p>${nl2br(f.introduction)}</p>
+
+    <h3>Project Scope</h3>
+    <p>${nl2br(f.scopeNotes)}</p>
+
+    <h3>Deliverables — Milestones Achieved</h3>
+    <table><tr><th>Operation</th><th>Target (Ha)</th><th>Achieved (Ha)</th><th>% of Target</th></tr>${prodRows}</table>
+
+    <h3>Payment Received</h3>
+    <p>${nl2br(f.paymentReceivedNotes)}</p>
+
+    <h3>Project Timeframe</h3>
+    <table>
+      <tr><td>Start Date</td><td>${fmtDate(state.project.startDate)}</td></tr>
+      <tr><td>Planned Duration</td><td>${state.project.days} days</td></tr>
+      <tr><td>As-Of Date</td><td>${fmtDate(state.asOfDate)}</td></tr>
+    </table>
+
+    <h3>Financial Analysis / Expenditure (by Cost Head)</h3>
+    <table><tr><th>Cost Head</th><th>Approved Budget</th><th>Committed</th><th>Actual</th><th>Total</th><th>Balance</th></tr>${bvaRows}
+    <tr><td><b>TOTAL</b></td><td><b>${fmtN(totals.budget)}</b></td><td><b>${fmtN(totals.committed)}</b></td><td><b>${fmtN(totals.actual)}</b></td><td><b>${fmtN(totals.total)}</b></td><td><b>${fmtN(totals.balance)}</b></td></tr>
+    </table>
+
+    <h3>Fund Reconciliation — Advances</h3>
+    <table><tr><th>Released To</th><th>Amount Released</th><th>Amount Retired</th><th>Balance</th><th>Status</th></tr>${advRows}</table>
+    <p>${nl2br(f.fundReconciliationNotes)}</p>
+
+    <h3>Challenges and Lessons Learnt</h3>
+    <p>${nl2br(f.challengesNotes)}</p>
+
+    <h3>Recommendations</h3>
+    <p>${nl2br(f.recommendationsNotes)}</p>
+
+    <h3>Conclusion</h3>
+    <p>${nl2br(f.conclusionNotes)}</p>
+
+    <table style="margin-top:20px;">
+      <tr><th>Name</th><th>Designation</th><th>Signature</th></tr>
+      <tr><td>Report Prepared By: ${esc(f.preparedBy)}</td><td>${esc(f.preparedDesignation)}</td><td></td></tr>
+      <tr><td>Report Checked By: ${esc(f.checkedBy)}</td><td>${esc(f.checkedDesignation)}</td><td></td></tr>
+      <tr><td>Report Verified By: ${esc(f.verifiedBy)}</td><td>${esc(f.verifiedDesignation)}</td><td></td></tr>
+    </table>
+  `;
+}
+function buildRequestMemoHTML(r){
+  const f = r.fields||{};
+  return `
+    ${buildDocHeader("REQUEST MEMO", fmtDate(f.requestDate||todayStr()))}
+    <table>
+      <tr><td>Category</td><td>${esc(f.category)}</td></tr>
+      <tr><td>Requested By</td><td>${esc(f.requestedBy)}</td></tr>
+      <tr><td>Urgency</td><td>${esc(f.urgency)}</td></tr>
+      <tr><td>Item / Description</td><td>${esc(f.itemDescription)}</td></tr>
+      <tr><td>Quantity</td><td>${esc(f.quantity)} ${esc(f.unit)}</td></tr>
+      ${f.amountNaira?`<tr><td>Estimated Cost</td><td>${fmtN(f.amountNaira)}</td></tr>`:""}
+    </table>
+    <h3>Justification</h3>
+    <p>${nl2br(f.justification)}</p>
+    <p style="margin-top:22px;">Requested by: <b>${esc(f.requestedBy)}</b><br>Date: ${fmtDate(f.requestDate||todayStr())}</p>
+  `;
+}
+function buildReportHTML(r){
+  if(r.type==="progress") return buildProgressReportHTML(r);
+  if(r.type==="final") return buildFinalReportHTML(r);
+  return buildRequestMemoHTML(r);
+}
+function viewReport(id){
+  const r = state.reports.find(x=>x.id===id);
+  if(!r) return;
+  openSheet(`
+    <h2>${esc(reportTitleFor(r))}</h2>
+    <div class="report-doc">${buildReportHTML(r)}</div>
+    <div class="sheet-actions" style="margin-top:12px;">
+      <button class="btn btn-ghost" onclick="openReportForm('${r.type}','${id}')">Edit</button>
+      <button class="btn btn-primary" onclick="printReport('${id}')">Print as PDF</button>
+    </div>
+    <div class="field" style="margin-top:14px;">
+      <label>Send to email(s)</label>
+      <input id="reportEmailTo" placeholder="name@example.com, name2@example.com">
+      <div class="hint">Opens your email app. For Progress/Final reports, print the PDF first and attach it — email links can't attach files automatically.</div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-primary" onclick="emailReport('${id}')">Submit to Email</button>
+    </div>
+  `);
+}
+function printReport(id){
+  const r = state.reports.find(x=>x.id===id);
+  if(!r) return;
+  document.getElementById('printArea').innerHTML = `<div class="report-doc">${buildReportHTML(r)}</div>`;
+  window.print();
+}
+function plainTextForRequest(r){
+  const f = r.fields||{};
+  return [
+    `Category: ${f.category||""}`,
+    `Requested By: ${f.requestedBy||""}`,
+    `Date: ${fmtDate(f.requestDate)}`,
+    `Urgency: ${f.urgency||""}`,
+    `Item: ${f.itemDescription||""}`,
+    `Quantity: ${f.quantity||""} ${f.unit||""}`,
+    f.amountNaira?`Estimated Cost: ${fmtN(f.amountNaira)}`:null,
+    ``,
+    `Justification:`,
+    f.justification||""
+  ].filter(x=>x!==null).join("\n");
+}
+function emailReport(id){
+  const r = state.reports.find(x=>x.id===id);
+  if(!r) return;
+  const to = val('reportEmailTo').split(/[,;]+/).map(s=>s.trim()).filter(Boolean).join(',');
+  if(!to){ alert('Enter at least one email address.'); return; }
+  const subject = encodeURIComponent(reportTitleFor(r));
+  const bodyText = r.type==="request" ? plainTextForRequest(r)
+    : `${reportTitleFor(r)}\n\nSee the attached PDF for the full report.\nUse "Print as PDF" in the app, save the file, then attach it here — email links can't attach files automatically.\n\n— sent from Bebi Field Ledger`;
+  window.location.href = `mailto:${to}?subject=${subject}&body=${encodeURIComponent(bodyText)}`;
+}
+
 /* ================= SETTINGS ================= */
 function openSettings(){
   settingsSheetOpen = true;
@@ -1238,8 +1591,8 @@ function mergeArraysById(localArr, remoteArr){
 function mergeStates(local, remote){
   if(!remote) return local;
   const merged = {...local};
-  ["expenses","productivity","advances","dieselLog","machineLog"].forEach(key=>{
-    merged[key] = mergeArraysById(local[key], remote[key]);
+  ["expenses","productivity","advances","dieselLog","machineLog","reports"].forEach(key=>{
+    merged[key] = mergeArraysById(local[key]||[], remote[key]||[]);
   });
   if((remote.configUpdatedAt||0) > (local.configUpdatedAt||0)){
     ["project","costHeads","operations","thresholds","diesel","machines","txnTypes","paymentSources","txnStatuses"].forEach(key=>{
