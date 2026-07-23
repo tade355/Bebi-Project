@@ -1053,11 +1053,20 @@ function renderStockTab(){
 function openStockForm(id){
   editing = {type:"stock", id:id||null};
   const r = id ? state.stockLog.find(x=>x.id===id) : {date:state.asOfDate, itemName:state.stockItems[0].name, movement:"Received", quantity:"", purpose:"", remarks:""};
-  const itemOpts = state.stockItems.map(it=>`<option value="${esc(it.name)}" ${it.name===r.itemName?'selected':''}>${esc(it.name)} (${esc(it.unit)})</option>`).join("");
+  const itemOpts = state.stockItems.map(it=>`<option value="${esc(it.name)}" ${it.name===r.itemName?'selected':''}>${esc(it.name)} (${esc(it.unit)})</option>`).join("")
+    + `<option value="__new__">+ Add new item (e.g. a new herbicide)…</option>`;
+  const catOpts = ["Herbicide","Fertilizer","Seedling","Other"].map(c=>`<option>${c}</option>`).join("");
   openSheet(`
     <h2>${id?"Edit":"Log"} Stock Movement</h2>
     <div class="field"><label>Date</label><input type="date" id="f_date" value="${r.date}"></div>
-    <div class="field"><label>Item</label><select id="f_itemName">${itemOpts}</select></div>
+    <div class="field"><label>Item</label><select id="f_itemName" onchange="stockItemChanged()">${itemOpts}</select></div>
+    <div id="newItemFields" style="display:none;">
+      <div class="field"><label>Herbicide / Item Name</label><input id="f_newItemName" placeholder="e.g. Glyphosate 41% SL, Atrazine 50% WP"></div>
+      <div class="row2">
+        <div class="field"><label>Category</label><select id="f_newItemCategory">${catOpts}</select></div>
+        <div class="field"><label>Packaging Type</label><input id="f_newItemUnit" placeholder="e.g. 1L Bottle, 500g Sachet, 20L Carton"></div>
+      </div>
+    </div>
     <div class="field"><label>Movement</label>
       <div class="toggle-row">
         <button type="button" class="${r.movement==='Received'?'active received':''}" onclick="pick('f_movement','Received',this)">Received</button>
@@ -1074,8 +1083,23 @@ function openStockForm(id){
     </div>
   `);
 }
+function stockItemChanged(){
+  const isNew = val('f_itemName')==='__new__';
+  document.getElementById('newItemFields').style.display = isNew ? 'block' : 'none';
+}
 function saveStock(){
-  const rec = {id:editing.id||uid(), date:val('f_date'), itemName:val('f_itemName'), movement:val('f_movement')||'Received', quantity:Number(val('f_quantity'))||0, purpose:val('f_purpose'), remarks:val('f_remarks')};
+  let itemName = val('f_itemName');
+  if(itemName==='__new__'){
+    const name = val('f_newItemName').trim();
+    const unit = val('f_newItemUnit').trim();
+    if(!name || !unit){ alert('Enter both the item name and its packaging type.'); return; }
+    if(!state.stockItems.some(it=>it.name===name)){
+      state.stockItems.push({name, category: val('f_newItemCategory')||'Other', unit});
+      state.configUpdatedAt = Date.now();
+    }
+    itemName = name;
+  }
+  const rec = {id:editing.id||uid(), date:val('f_date'), itemName, movement:val('f_movement')||'Received', quantity:Number(val('f_quantity'))||0, purpose:val('f_purpose'), remarks:val('f_remarks')};
   upsert('stockLog', rec);
   closeSheet(); saveState(); render();
 }
@@ -1536,13 +1560,13 @@ function openSettings(){
       <h3>Stock Items (fertilizer, seedlings, herbicides, etc.)</h3>
       <div id="stockItemRows">${state.stockItems.map(it=>`
         <div class="list-row">
-          <input data-si-name value="${esc(it.name)}" placeholder="Item name">
+          <input data-si-name value="${esc(it.name)}" placeholder="e.g. Glyphosate 41% SL">
           <input data-si-category value="${esc(it.category)}" placeholder="Category" style="max-width:110px;">
-          <input data-si-unit value="${esc(it.unit)}" placeholder="Unit" style="max-width:90px;">
+          <input data-si-unit value="${esc(it.unit)}" placeholder="e.g. 1L Bottle" style="max-width:110px;">
           <button class="rm" onclick="this.parentElement.remove()">✕</button>
         </div>`).join("")}</div>
-      <button class="add-row-btn" onclick="addRow('stockItemRows','<input data-si-name placeholder=\\'Item name\\'><input data-si-category placeholder=\\'Category\\' style=\\'max-width:110px;\\'><input data-si-unit placeholder=\\'Unit\\' style=\\'max-width:90px;\\'>')">+ Add stock item</button>
-      <div class="note">Remember to also click Save Settings below after adding or removing stock items.</div>
+      <button class="add-row-btn" onclick="addRow('stockItemRows','<input data-si-name placeholder=\\'e.g. Glyphosate 41% SL\\'><input data-si-category placeholder=\\'Category\\' style=\\'max-width:110px;\\'><input data-si-unit placeholder=\\'e.g. 1L Bottle\\' style=\\'max-width:110px;\\'>')">+ Add stock item</button>
+      <div class="note">Each herbicide can have its own name and packaging type (e.g. "Glyphosate 41% SL" · "1L Bottle" vs "Atrazine 50% WP" · "500g Sachet") — they're tracked as separate stock items. You can also add a new item directly from the "Log stock movement" form. Remember to click Save Settings below after adding or removing items here.</div>
     </div>
 
     <div class="settings-section">
