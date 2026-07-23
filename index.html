@@ -7,6 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="assets/chart.umd.min.js"></script>
+<link rel="stylesheet" href="assets/leaflet.css">
+<script src="assets/leaflet.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
@@ -239,6 +241,10 @@
   .report-doc .doc-header img{width:40px; height:40px; border-radius:8px; object-fit:cover; background:#fff; flex:none;}
   .report-doc .doc-header h1{font-size:15px; line-height:1.3;}
 
+  #plotMapEl{height:340px; border-radius:12px; overflow:hidden; border:1px solid var(--line);}
+  #plotMapEl .leaflet-popup-content-wrapper{background:var(--surface); color:var(--parchment); border-radius:10px;}
+  #plotMapEl .leaflet-popup-tip{background:var(--surface);}
+
   #printArea{display:none;}
   @media print{
     body *{visibility:hidden;}
@@ -404,6 +410,9 @@ function defaultState(){
 let state = null;
 let currentTab = "dashboard";
 let fieldOpsSub = "diesel";
+let outputSub = "log";
+let pendingKml = null;
+let plotMap = null;
 let editing = {type:null, id:null};
 const charts = {};
 
@@ -628,6 +637,9 @@ function afterRenderHooks(){
     drawBudgetChart();
     drawProdChart();
     drawSCurve();
+  }
+  if(currentTab==="output" && outputSub==="map"){
+    drawPlotMap();
   }
 }
 
@@ -878,7 +890,21 @@ function saveExpense(){
 }
 
 /* ================= OUTPUT (PRODUCTIVITY) ================= */
+const PLOT_COLORS = ["#C9793B","#92A85A","#4A90D9","#D94A90","#D9A441","#4AD9C9","#9B59B6","#E74C3C"];
+function colorForOperation(name){
+  let hash = 0;
+  for(let i=0;i<name.length;i++){ hash = (hash*31 + name.charCodeAt(i)) | 0; }
+  return PLOT_COLORS[Math.abs(hash) % PLOT_COLORS.length];
+}
 function renderOutput(){
+  const seg = `<div class="segment">
+    <button class="${outputSub==='log'?'active':''}" onclick="setOutputSub('log')">Log</button>
+    <button class="${outputSub==='map'?'active':''}" onclick="setOutputSub('map')">Map</button>
+  </div>`;
+  return seg + (outputSub==='log' ? renderOutputLog() : renderOutputMap());
+}
+function setOutputSub(s){ outputSub = s; render(); }
+function renderOutputLog(){
   const prod = calcProductivity();
   const list = [...active(state.productivity)].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
   const summary = `<div class="card"><div class="card-title">Progress by operation</div>${prod.perOp.map(o=>`
@@ -892,12 +918,67 @@ function renderOutput(){
         <div><div class="entry-date">${fmtDate(p.date)}</div><div class="entry-title">${esc(p.operation)}</div></div>
         <div class="entry-amount">${fmtNum(p.ha,2)} Ha</div>
       </div>
-      ${p.remarks?`<div class="entry-meta">${esc(p.remarks)}</div>`:""}
+      <div class="entry-meta">
+        ${p.remarks?`<span>${esc(p.remarks)}</span>`:""}
+        ${p.kmlName?`<span class="chip neutral">📍 ${esc(p.kmlName)}</span>`:""}
+      </div>
     </div>`).join("") : emptyState("🌾","No output logged yet","Tap “Log output” after each day in the field.");
   return `${summary}${body}${fab("Log output","openOutputForm()")}`;
 }
+function renderOutputMap(){
+  const legend = state.operations.map(o=>`<div class="item"><span class="dot" style="background:${colorForOperation(o.name)}"></span>${esc(o.name)}</div>`).join("");
+  const plottedCount = active(state.productivity).filter(p=>p.kmlCoords && p.kmlCoords.length).length;
+  return `
+    <div class="card">
+      <div class="card-title">Plotted Area · by operation</div>
+      <div id="plotMapEl"></div>
+      <div class="strata-legend" style="margin-top:10px;">${legend}</div>
+      <div class="sheet-actions" style="margin-top:10px;">
+        <button class="btn btn-ghost" onclick="exportCombinedKML()">Export combined KML</button>
+      </div>
+      <div class="note">${plottedCount ? `${plottedCount} plotted entr${plottedCount===1?'y':'ies'}. Tap a shape for its date, operation and hectares.` : "No plots uploaded yet — attach a .kml file when logging output."} Base imagery needs an internet connection; plot shapes still work offline.</div>
+    </div>
+  `;
+}
+function parseKML(text){
+  let xml;
+  try{ xml = new DOMParser().parseFromString(text, "text/xml"); }catch(e){ return []; }
+  if(xml.querySelector("parsererror")) return [];
+  const polygons = [];
+  const polyNodes = xml.getElementsByTagName("Polygon");
+  for(const poly of polyNodes){
+    const coordNode = poly.getElementsByTagName("coordinates")[0];
+    if(!coordNode) continue;
+    const pts = coordNode.textContent.trim().split(/\s+/).map(pair=>{
+      const parts = pair.split(",");
+      const lon = Number(parts[0]), lat = Number(parts[1]);
+      return [lat, lon];
+    }).filter(p=>!isNaN(p[0]) && !isNaN(p[1]));
+    if(pts.length>=3) polygons.push(pts);
+  }
+  return polygons;
+}
+function handleKmlUpload(input){
+  const file = input.files[0];
+  if(!file) return;
+  const note = document.getElementById('kmlPreviewNote');
+  const reader = new FileReader();
+  reader.onload = e=>{
+    const coords = parseKML(String(e.target.result));
+    if(!coords.length){
+      pendingKml = null;
+      if(note) note.textContent = "Couldn't find a polygon in that file — make sure it's a KML with a field boundary.";
+      return;
+    }
+    pendingKml = {raw:String(e.target.result), coords, name:file.name};
+    if(note) note.textContent = `Ready to attach: ${file.name} (${coords.length} shape${coords.length>1?'s':''})`;
+  };
+  reader.onerror = ()=>{ if(note) note.textContent = "Couldn't read that file."; };
+  reader.readAsText(file);
+}
 function openOutputForm(id){
   editing = {type:"productivity", id: id||null};
+  pendingKml = null;
   const p = id ? state.productivity.find(x=>x.id===id) : {date:state.asOfDate, operation:state.operations[0].name, ha:"", remarks:""};
   const opOpts = state.operations.map(o=>`<option ${o.name===p.operation?'selected':''}>${esc(o.name)}</option>`).join("");
   openSheet(`
@@ -905,6 +986,10 @@ function openOutputForm(id){
     <div class="field"><label>Date</label><input type="date" id="f_date" value="${p.date}"></div>
     <div class="field"><label>Operation</label><select id="f_operation">${opOpts}</select></div>
     <div class="field"><label>Hectares Achieved (this day)</label><input type="number" inputmode="decimal" id="f_ha" value="${p.ha}"></div>
+    <div class="field"><label>Field Boundary KML (optional)</label>
+      <input type="file" accept=".kml" onchange="handleKmlUpload(this)">
+      <div class="hint" id="kmlPreviewNote">${p.kmlName ? "Attached: "+esc(p.kmlName)+" — choose a new file to replace it." : "Upload a .kml boundary file from your GPS/drone tool to plot this on the map."}</div>
+    </div>
     <div class="field"><label>Remarks</label><textarea id="f_remarks">${esc(p.remarks)}</textarea></div>
     <div class="sheet-actions">
       ${id?`<button class="btn btn-danger" onclick="deleteEntry('productivity','${id}')">Delete</button>`:""}
@@ -913,9 +998,68 @@ function openOutputForm(id){
   `);
 }
 function saveOutput(){
-  const rec = {id: editing.id||uid(), date: val('f_date'), operation: val('f_operation'), ha: Number(val('f_ha'))||0, remarks: val('f_remarks')};
+  const existing = editing.id ? state.productivity.find(x=>x.id===editing.id) : null;
+  const rec = {
+    id: editing.id||uid(), date: val('f_date'), operation: val('f_operation'), ha: Number(val('f_ha'))||0, remarks: val('f_remarks'),
+    kmlRaw: pendingKml ? pendingKml.raw : (existing?existing.kmlRaw:undefined),
+    kmlCoords: pendingKml ? pendingKml.coords : (existing?existing.kmlCoords:undefined),
+    kmlName: pendingKml ? pendingKml.name : (existing?existing.kmlName:undefined)
+  };
   upsert('productivity', rec);
+  pendingKml = null;
   closeSheet(); saveState(); render();
+}
+function drawPlotMap(){
+  const el = document.getElementById('plotMapEl');
+  if(!el) return;
+  if(typeof L === "undefined"){ el.innerHTML = '<div class="note" style="padding:14px;">Map library unavailable — check your connection.</div>'; return; }
+  if(plotMap){ plotMap.remove(); plotMap = null; }
+  plotMap = L.map(el);
+  const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'});
+  const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom:19, attribution:'Esri'});
+  streets.addTo(plotMap);
+  L.control.layers({"Streets":streets, "Satellite":satellite}).addTo(plotMap);
+
+  const plotted = active(state.productivity).filter(p=>p.kmlCoords && p.kmlCoords.length);
+  const layers = [];
+  plotted.forEach(p=>{
+    const color = colorForOperation(p.operation);
+    p.kmlCoords.forEach(ring=>{
+      const poly = L.polygon(ring, {color, weight:2, fillColor:color, fillOpacity:0.35}).addTo(plotMap);
+      poly.bindPopup(`<b>${esc(p.operation)}</b><br>${fmtDate(p.date)}<br>${fmtNum(p.ha,2)} Ha`);
+      layers.push(poly);
+    });
+  });
+  if(layers.length){
+    plotMap.fitBounds(L.featureGroup(layers).getBounds().pad(0.15));
+  } else {
+    plotMap.setView([6.5, 8.6], 9);
+  }
+}
+function hexToKmlColor(hex, alphaHex){
+  hex = hex.replace('#','');
+  const r = hex.substring(0,2), g = hex.substring(2,4), b = hex.substring(4,6);
+  return (alphaHex+b+g+r).toLowerCase();
+}
+function exportCombinedKML(){
+  const plotted = active(state.productivity).filter(p=>p.kmlCoords && p.kmlCoords.length);
+  if(!plotted.length){ alert("No plotted areas to export yet."); return; }
+  const opNames = [...new Set(plotted.map(p=>p.operation))];
+  const styles = opNames.map((name,i)=>{
+    const color = colorForOperation(name);
+    return `<Style id="op${i}"><LineStyle><color>${hexToKmlColor(color,'ff')}</color><width>2</width></LineStyle><PolyStyle><color>${hexToKmlColor(color,'66')}</color></PolyStyle></Style>`;
+  }).join("");
+  const styleIdx = {}; opNames.forEach((n,i)=>{ styleIdx[n]=i; });
+  const placemarks = plotted.map(p=>p.kmlCoords.map(ring=>{
+    const coordStr = ring.map(([lat,lon])=>`${lon},${lat},0`).join(" ");
+    return `<Placemark><name>${esc(p.operation)} - ${esc(p.date)}</name><description>${fmtNum(p.ha,2)} Ha on ${esc(fmtDate(p.date))}</description><styleUrl>#op${styleIdx[p.operation]}</styleUrl><Polygon><outerBoundaryIs><LinearRing><coordinates>${coordStr}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
+  }).join("")).join("");
+  const kml = `<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(state.project.name)} - Plotted Operations</name>${styles}${placemarks}</Document></kml>`;
+  const blob = new Blob([kml], {type:'application/vnd.google-earth.kml+xml'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'bebi-plots-'+todayStr()+'.kml';
+  a.click();
 }
 
 /* ================= FIELD OPS (DIESEL + MACHINE) ================= */
