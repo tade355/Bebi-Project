@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>Bebi Field Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg: #171D14;
+    --surface: #212A1C;
+    --surface-2: #2A3524;
+    --line: #3A4531;
+    --clay: #C9793B;
+    --clay-dim: #8a5228;
+    --leaf: #92A85A;
+    --parchment: #EFE8D8;
+    --dim: #A9AA98;
+    --danger: #C2453A;
+    --amber: #D9A441;
+    --radius: 14px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--parchment);}
+  body{
+    font-family:'IBM Plex Sans', system-ui, sans-serif;
+    font-size:15px;
+    line-height:1.4;
+    padding-bottom:78px;
+    min-height:100vh;
+  }
+  h1,h2,h3{font-family:'Space Grotesk','Trebuchet MS',sans-serif; margin:0; letter-spacing:0.2px;}
+  .mono{font-family:'IBM Plex Mono', ui-monospace, Consolas, monospace;}
+  ::selection{background:var(--clay); color:#171D14;}
+
+  /* ---------- header ---------- */
+  #topbar{
+    position:sticky; top:0; z-index:20;
+    background:linear-gradient(180deg, #1B2317 0%, #171D14 100%);
+    border-bottom:1px solid var(--line);
+    padding:14px 16px 12px;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  #topbar .brand{display:flex; flex-direction:column;}
+  #topbar .brand .eyebrow{
+    font-family:'IBM Plex Mono', monospace; font-size:10.5px; letter-spacing:2px;
+    color:var(--leaf); text-transform:uppercase; margin-bottom:2px;
+  }
+  #topbar h1{font-size:19px; color:var(--parchment);}
+  #topbar .sub{font-size:11.5px; color:var(--dim); margin-top:2px;}
+  #settingsBtn{
+    background:var(--surface-2); border:1px solid var(--line); color:var(--parchment);
+    width:40px; height:40px; border-radius:10px; font-size:18px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #settingsBtn:active{background:var(--clay-dim);}
+
+  /* ---------- exception banner ---------- */
+  #exceptionBanner{
+    margin:10px 14px 0; padding:10px 12px; border-radius:10px;
+    background:rgba(194,69,58,0.14); border:1px solid rgba(194,69,58,0.45);
+    color:#F0C9C4; font-size:12.5px; display:none;
+  }
+  #exceptionBanner b{color:#fff;}
+
+  main{padding:14px 14px 8px;}
+
+  /* ---------- cards ---------- */
+  .card{
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--radius); padding:14px; margin-bottom:12px;
+  }
+  .card-title{
+    font-family:'Space Grotesk','Trebuchet MS',sans-serif; font-size:13px;
+    text-transform:uppercase; letter-spacing:1.2px; color:var(--dim); margin-bottom:10px;
+  }
+  .stat-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .stat{
+    background:var(--surface-2); border-radius:10px; padding:10px 12px;
+  }
+  .stat .label{font-size:11px; color:var(--dim); margin-bottom:4px;}
+  .stat .value{font-family:'IBM Plex Mono',monospace; font-size:17px; font-weight:600;}
+  .stat .value.small{font-size:14px;}
+
+  /* ---------- strata bar (signature element) ---------- */
+  .strata-wrap{margin-bottom:8px;}
+  .strata{
+    display:flex; height:34px; border-radius:8px; overflow:hidden;
+    border:1px solid var(--line);
+  }
+  .strata .seg{height:100%; min-width:3px;}
+  .strata-legend{display:flex; flex-wrap:wrap; gap:8px 14px; margin-top:10px;}
+  .strata-legend .item{display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--dim);}
+  .strata-legend .dot{width:9px; height:9px; border-radius:3px; flex:none;}
+
+  .rag-healthy{background:var(--leaf);}
+  .rag-watch{background:var(--amber);}
+  .rag-critical{background:#C2453A;}
+  .rag-over{background:#7C1F18;}
+  .chip{
+    display:inline-flex; align-items:center; padding:3px 9px; border-radius:20px;
+    font-size:11px; font-weight:600; letter-spacing:0.2px;
+  }
+  .chip.healthy{background:rgba(146,168,90,0.22); color:var(--leaf);}
+  .chip.watch{background:rgba(217,164,65,0.22); color:var(--amber);}
+  .chip.critical{background:rgba(194,69,58,0.22); color:#EF9990;}
+  .chip.over{background:rgba(124,31,24,0.35); color:#FF9C90;}
+  .chip.committed{background:rgba(217,164,65,0.2); color:var(--amber);}
+  .chip.actual{background:rgba(146,168,90,0.2); color:var(--leaf);}
+  .chip.neutral{background:var(--surface-2); color:var(--dim);}
+
+  /* ---------- progress bars ---------- */
+  .op-row{margin-bottom:12px;}
+  .op-row:last-child{margin-bottom:0;}
+  .op-row .op-head{display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:5px;}
+  .op-row .op-head .name{color:var(--parchment); font-weight:500;}
+  .op-row .op-head .figs{font-family:'IBM Plex Mono',monospace; color:var(--dim);}
+  .bar-track{height:9px; background:var(--surface-2); border-radius:6px; overflow:hidden;}
+  .bar-fill{height:100%; background:var(--leaf); border-radius:6px;}
+
+  canvas{max-width:100%;}
+  .chart-box{position:relative; height:220px; margin-top:6px;}
+
+  /* ---------- lists / entries ---------- */
+  .entry{
+    background:var(--surface); border:1px solid var(--line); border-radius:12px;
+    padding:12px; margin-bottom:9px; display:flex; flex-direction:column; gap:6px;
+  }
+  .entry-top{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .entry-date{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--dim);}
+  .entry-title{font-size:14px; font-weight:500; color:var(--parchment);}
+  .entry-amount{font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; color:var(--parchment); white-space:nowrap;}
+  .entry-meta{font-size:11.5px; color:var(--dim); display:flex; flex-wrap:wrap; gap:6px; align-items:center;}
+  .entry:active{background:var(--surface-2);}
+
+  .empty-state{
+    text-align:center; padding:34px 16px; color:var(--dim); font-size:13px;
+  }
+  .empty-state .big{font-size:30px; margin-bottom:6px;}
+
+  /* ---------- floating add button ---------- */
+  .fab-row{position:sticky; bottom:76px; display:flex; justify-content:flex-end; pointer-events:none; margin-top:6px;}
+  .fab{
+    pointer-events:auto;
+    background:var(--clay); color:#20140a; border:none; border-radius:26px;
+    padding:13px 20px; font-family:'Space Grotesk','Trebuchet MS',sans-serif; font-weight:700; font-size:14px;
+    display:flex; align-items:center; gap:8px; box-shadow:0 6px 18px rgba(0,0,0,0.4);
+  }
+  .fab:active{background:#b06a30;}
+
+  /* ---------- bottom nav ---------- */
+  #bottomnav{
+    position:fixed; bottom:0; left:0; right:0; z-index:30;
+    background:#151A12; border-top:1px solid var(--line);
+    display:flex; padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  #bottomnav button{
+    flex:1; background:none; border:none; color:var(--dim);
+    display:flex; flex-direction:column; align-items:center; gap:3px;
+    padding:6px 2px; font-family:'IBM Plex Sans',sans-serif; font-size:10.5px;
+  }
+  #bottomnav button .ic{font-size:19px; line-height:1;}
+  #bottomnav button.active{color:var(--clay);}
+
+  /* ---------- segmented control ---------- */
+  .segment{display:flex; background:var(--surface-2); border-radius:10px; padding:3px; margin-bottom:12px;}
+  .segment button{
+    flex:1; padding:8px; border:none; background:none; color:var(--dim);
+    border-radius:8px; font-size:12.5px; font-weight:500; font-family:'IBM Plex Sans',sans-serif;
+  }
+  .segment button.active{background:var(--clay); color:#20140a; font-weight:700;}
+
+  /* ---------- forms / modal ---------- */
+  #sheetOverlay{
+    position:fixed; inset:0; background:rgba(10,12,8,0.6); z-index:40;
+    display:none; align-items:flex-end;
+  }
+  #sheet{
+    background:var(--bg); width:100%; max-height:90vh; overflow-y:auto;
+    border-radius:20px 20px 0 0; border-top:1px solid var(--line);
+    padding:16px 16px calc(20px + env(safe-area-inset-bottom));
+  }
+  #sheet h2{font-size:17px; margin-bottom:14px;}
+  .field{margin-bottom:13px;}
+  .field label{display:block; font-size:11.5px; color:var(--dim); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.6px;}
+  .field input, .field select, .field textarea{
+    width:100%; background:var(--surface); border:1px solid var(--line); color:var(--parchment);
+    border-radius:9px; padding:11px 12px; font-size:14.5px; font-family:'IBM Plex Sans',sans-serif;
+  }
+  .field input[type=date]{font-family:'IBM Plex Mono',monospace;}
+  .field textarea{resize:vertical; min-height:60px;}
+  .field .hint{font-size:11px; color:var(--dim); margin-top:4px;}
+  .toggle-row{display:flex; gap:8px;}
+  .toggle-row button{
+    flex:1; padding:10px; border-radius:9px; border:1px solid var(--line); background:var(--surface);
+    color:var(--dim); font-size:13px; font-weight:600;
+  }
+  .toggle-row button.active.committed{background:rgba(217,164,65,0.2); color:var(--amber); border-color:var(--amber);}
+  .toggle-row button.active.actual{background:rgba(146,168,90,0.2); color:var(--leaf); border-color:var(--leaf);}
+  .sheet-actions{display:flex; gap:10px; margin-top:6px;}
+  .btn{
+    flex:1; padding:13px; border-radius:10px; border:none; font-weight:700; font-size:14px;
+    font-family:'Space Grotesk','Trebuchet MS',sans-serif;
+  }
+  .btn-primary{background:var(--clay); color:#20140a;}
+  .btn-ghost{background:var(--surface-2); color:var(--parchment);}
+  .btn-danger{background:rgba(194,69,58,0.18); color:#EF9990;}
+  .row2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .close-x{position:absolute; right:16px; top:16px; color:var(--dim); font-size:22px; background:none; border:none;}
+  #sheet{position:relative;}
+
+  .settings-section{margin-bottom:18px;}
+  .settings-section h3{font-size:12.5px; text-transform:uppercase; letter-spacing:1px; color:var(--clay); margin-bottom:10px;}
+  .list-row{display:flex; gap:8px; margin-bottom:8px; align-items:center;}
+  .list-row input{flex:1;}
+  .list-row .rm{background:var(--surface-2); border:1px solid var(--line); color:var(--danger); width:36px; height:36px; border-radius:8px; flex:none;}
+  .add-row-btn{background:none; border:1px dashed var(--line); color:var(--dim); width:100%; padding:9px; border-radius:9px; font-size:12.5px;}
+
+  .loading{display:flex; align-items:center; justify-content:center; height:60vh; color:var(--dim); font-size:13px;}
+  .note{font-size:11.5px; color:var(--dim); line-height:1.5; margin-top:2px;}
+  a.linklike{color:var(--clay);}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">
+    <div class="eyebrow">Cross River State &middot; 2026</div>
+    <h1 id="brandTitle">Bebi Field Ledger</h1>
+    <div class="sub" id="brandSub">loading…</div>
+  </div>
+  <button id="settingsBtn" onclick="openSettings()">&#9881;</button>
+</div>
+
+<div id="exceptionBanner"></div>
+
+<main id="view">
+  <div class="loading">Loading your data…</div>
+</main>
+
+<div id="bottomnav">
+  <button data-tab="dashboard" onclick="setTab('dashboard')"><span class="ic">&#9673;</span>Dashboard</button>
+  <button data-tab="expenses" onclick="setTab('expenses')"><span class="ic">&#8358;</span>Expenses</button>
+  <button data-tab="output" onclick="setTab('output')"><span class="ic">&#127807;</span>Output</button>
+  <button data-tab="fieldops" onclick="setTab('fieldops')"><span class="ic">&#9981;</span>Field Ops</button>
+  <button data-tab="advances" onclick="setTab('advances')"><span class="ic">&#128179;</span>Advances</button>
+</div>
+
+<div id="sheetOverlay" onclick="if(event.target===this) closeSheet()">
+  <div id="sheet"></div>
+</div>
+
+<script>
+/* =====================================================================
+   BEBI FIELD LEDGER — mobile field-operations tracker
+   Mirrors the logic of the Bebi Project (2026) Excel workbook:
+   Cost Heads -> Daily Expenses -> Budget vs Actual, Daily Productivity,
+   Diesel Sub-Ledger, Machine Utilization, Fund Retirement, and EVM.
+   ===================================================================== */
+
+const STORAGE_KEY = "bebi-field-ledger-v2";
+let hasCloudStorage = (typeof window.storage !== "undefined" && window.storage !== null);
+
+function defaultState(){
+  return {
+    project: {
+      name: "Bebi Project (2026)",
+      parent: "CRS Cassava Project",
+      site: "Bebi, Obalinku LGA, Cross River State",
+      periodLabel: "18th July – 6th August 2026",
+      startDate: "2026-07-18",
+      days: 20,
+      tractors: 1,
+      manager: "Oluwatade Dada",
+      baseline: "Baselined"
+    },
+    costHeads: [
+      {name:"Fueling (AGO)", budget:540000},
+      {name:"Operators Allowance", budget:115000},
+      {name:"Site Logistics", budget:210000},
+      {name:"Spraying", budget:115000},
+      {name:"Manual Planting", budget:120000},
+      {name:"Fertilizer Application", budget:100000},
+      {name:"Contingency", budget:50000}
+    ],
+    operations: [
+      {name:"Ploughing", rate:3, target:10},
+      {name:"Harrowing", rate:4, target:10},
+      {name:"Ridging", rate:4, target:10},
+      {name:"Planting (Manual)", rate:null, target:10},
+      {name:"Spraying (Manual)", rate:null, target:10},
+      {name:"Fertilization (Manual)", rate:null, target:10}
+    ],
+    thresholds: {watch:0.6, critical:0.85, overdueDays:14},
+    diesel: {openingStock:0, unitCost:1800, tankCapacity:500},
+    machines: [
+      {id:"Tractor-01", type:"Wheeled Tractor + Implements", hoursPerDay:8},
+      {id:"Tractor-06", type:"Wheeled Tractor + Implements", hoursPerDay:8}
+    ],
+    txnTypes: ["Committed","Actual"],
+    paymentSources: ["Company Account","Project Cash Advance","Petty Cash","Bank Transfer","Contractor Direct Payment"],
+    txnStatuses: ["Approved","Pending Approval","Retired","Pending Retirement","Rejected"],
+    expenses: [
+      {id:"TXN-0001", date:"2026-07-18", costHead:"Contingency", item:"Fueling for Tractor Transportation", payee:"Okuku Station", txnType:"Actual", amount:108000, advanceRef:null, paymentSource:"Company Account", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"DPS-201", remarks:""},
+      {id:"TXN-0002", date:"2026-07-18", costHead:"Fueling (AGO)", item:"Fueling for Tractor Operations", payee:"Obudu Station", txnType:"Actual", amount:108000, advanceRef:"ADV-0001", paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0003", date:"2026-07-18", costHead:"Contingency", item:"Road Expenses", payee:"LA", txnType:"Actual", amount:10000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0004", date:"2026-07-18", costHead:"Contingency", item:"LA Trip from Okuku to Bebi", payee:"LA", txnType:"Actual", amount:13500, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0005", date:"2026-07-19", costHead:"Site Logistics", item:"LA accomondation for 18th & 19th", payee:"", txnType:"Actual", amount:16000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0006", date:"2026-07-20", costHead:"Site Logistics", item:"Local Transport for 20th", payee:"LA", txnType:"Actual", amount:4000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0007", date:"2026-07-21", costHead:"Site Logistics", item:"Local Transport", payee:"LA", txnType:"Actual", amount:7000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0008", date:"2026-07-21", costHead:"Contingency", item:"Battery Rental", payee:"LA", txnType:"Actual", amount:6000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0009", date:"2026-07-21", costHead:"Site Logistics", item:"Transport", payee:"LA", txnType:"Actual", amount:8000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0010", date:"2026-07-22", costHead:"Contingency", item:"Battery Rental", payee:"LA", txnType:"Actual", amount:5000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0011", date:"2026-07-22", costHead:"Contingency", item:"Transport", payee:"LA", txnType:"Actual", amount:7000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0012", date:"2026-07-23", costHead:"Fueling (AGO)", item:"Fueling for Tractor Operations", payee:"Obudu Station", txnType:"Actual", amount:108000, advanceRef:null, paymentSource:"Project Cash Advance", status:"Approved", approvedBy:"Oluwatade Dada", receipt:"", remarks:""},
+      {id:"TXN-0013", date:"2026-07-23", costHead:"Contingency", item:"LA accomondation for 20 - 22", payee:"", txnType:"Committed", amount:24000, advanceRef:null, paymentSource:"Company Account", status:"Pending Approval", approvedBy:"", receipt:"", remarks:""},
+      {id:"TXN-0014", date:"2026-07-23", costHead:"Operators Allowance", item:"Operator Allowance for Day 1 & 2", payee:"", txnType:"Committed", amount:16670, advanceRef:null, paymentSource:"Company Account", status:"Pending Approval", approvedBy:"", receipt:"", remarks:""}
+    ],
+    productivity: [
+      {id:"PROD-0001", date:"2026-07-21", operation:"Ploughing", ha:2.3, remarks:""},
+      {id:"PROD-0002", date:"2026-07-22", operation:"Ploughing", ha:1.89, remarks:""}
+    ],
+    advances: [
+      {id:"ADV-0001", date:"2025-09-26", releasedTo:"EXAMPLE: Engr. Daniel", purpose:"Feeding allowance and site running costs for tractor operator crew", amount:40000, approvedBy:"Oluwatade Dada"}
+    ],
+    dieselLog: [
+      {id:"DSL-0001", date:"2026-07-21", received:60, issued:27.6, operation:"Ploughing", remarks:"Bulk delivery at start of ploughing"},
+      {id:"DSL-0002", date:"2026-07-22", received:0, issued:22.68, operation:"Ploughing", remarks:""},
+      {id:"DSL-0003", date:"2026-07-23", received:60, issued:0, operation:"", remarks:""}
+    ],
+    machineLog: [
+      {id:"MCH-0001", date:"2026-07-21", machineId:"Tractor-06", operation:"Ploughing", hoursWorked:6.67, idle:2, breakdown:1, remarks:"Battery Issues"},
+      {id:"MCH-0002", date:"2026-07-22", machineId:"Tractor-06", operation:"Ploughing", hoursWorked:3.23, idle:5, breakdown:3, remarks:"Battery Issues and Alternator"}
+    ],
+    asOfDate: todayStr()
+  };
+}
+
+let state = null;
+let currentTab = "dashboard";
+let fieldOpsSub = "diesel";
+let editing = {type:null, id:null};
+const charts = {};
+
+/* ---------------- storage ---------------- */
+async function loadState(){
+  if(hasCloudStorage){
+    try{
+      const res = await window.storage.get(STORAGE_KEY, false);
+      if(res && res.value){ return JSON.parse(res.value); }
+    }catch(e){ /* key not found yet -> fall through to defaults */ }
+    return defaultState();
+  } else {
+    try{
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if(raw) return JSON.parse(raw);
+    }catch(e){ console.warn("local storage read failed", e); }
+    return defaultState();
+  }
+}
+
+async function saveState(){
+  const json = JSON.stringify(state);
+  if(hasCloudStorage){
+    try{
+      const res = await window.storage.set(STORAGE_KEY, json, false);
+      if(!res) console.warn("storage.set returned falsy");
+    }catch(e){ console.error("cloud storage save failed", e); }
+  } else {
+    try{ localStorage.setItem(STORAGE_KEY, json); }
+    catch(e){ console.error("local storage save failed", e); }
+  }
+}
+
+/* ---------------- helpers ---------------- */
+function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+function todayStr(){ const d = new Date(); return d.toISOString().slice(0,10); }
+function addDays(dateStr, n){ const d = new Date(dateStr+"T00:00:00"); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function daysBetween(a,b){ const da=new Date(a+"T00:00:00"), db=new Date(b+"T00:00:00"); return Math.round((db-da)/86400000); }
+function fmtN(n){ n = Number(n)||0; const neg = n<0; n=Math.abs(n); const s = "₦"+n.toLocaleString('en-NG',{maximumFractionDigits:0}); return neg? "-"+s : s; }
+function fmtNum(n, dp){ if(n===null||n===undefined||n==="") return "–"; return Number(n).toLocaleString('en-NG',{minimumFractionDigits:dp||0,maximumFractionDigits:dp||0}); }
+function fmtPct(n){ if(n===null||n===undefined||n==="") return "–"; return (Number(n)*100).toFixed(1)+"%"; }
+function fmtDate(s){ if(!s) return "–"; const d=new Date(s+"T00:00:00"); return d.toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}); }
+function esc(s){ return (s===undefined||s===null)?"":String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function ragClass(r){ if(r==="Healthy") return "healthy"; if(r==="Watch") return "watch"; if(r==="Critical") return "critical"; if(r==="Over Budget") return "over"; return "neutral"; }
+
+/* ---------------- core calculations (mirrors the Excel workbook) ---------------- */
+function calcBudgetVsActual(){
+  return state.costHeads.map(ch=>{
+    const committed = state.expenses.filter(e=>e.costHead===ch.name && e.txnType==="Committed").reduce((s,e)=>s+Number(e.amount||0),0);
+    const actual = state.expenses.filter(e=>e.costHead===ch.name && e.txnType==="Actual").reduce((s,e)=>s+Number(e.amount||0),0);
+    const total = committed+actual;
+    const balance = ch.budget-total;
+    const pct = ch.budget>0 ? total/ch.budget : null;
+    let rag = "Healthy";
+    if(pct!==null){
+      if(pct>=1) rag="Over Budget";
+      else if(pct>=state.thresholds.critical) rag="Critical";
+      else if(pct>=state.thresholds.watch) rag="Watch";
+    }
+    return {name:ch.name, budget:ch.budget, committed, actual, total, balance, pct, rag};
+  });
+}
+function totalsFromBVA(bva){
+  return bva.reduce((acc,r)=>{acc.budget+=r.budget; acc.committed+=r.committed; acc.actual+=r.actual; acc.total+=r.total; acc.balance+=r.balance; return acc;}, {budget:0,committed:0,actual:0,total:0,balance:0});
+}
+
+function calcRetirement(){
+  return state.advances.map(a=>{
+    const retired = state.expenses.filter(e=>e.advanceRef===a.id).reduce((s,e)=>s+Number(e.amount||0),0);
+    const balance = a.amount-retired;
+    let status = "Pending";
+    if(retired>=a.amount && a.amount>0) status="Fully Retired";
+    else if(retired>0) status="Partially Retired";
+    const daysOut = status==="Fully Retired" ? null : daysBetween(a.date, state.asOfDate);
+    const overdue = daysOut!==null && daysOut>state.thresholds.overdueDays;
+    return {...a, retired, balance, status, daysOut, overdue};
+  });
+}
+
+function haCoveredFor(date, operation){
+  if(!operation) return 0;
+  return state.productivity.filter(p=>p.date===date && p.operation===operation).reduce((s,p)=>s+Number(p.ha||0),0);
+}
+
+function calcDiesel(){
+  const rows = [...state.dieselLog].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  let running = state.diesel.openingStock;
+  let cumCost = 0;
+  const out = rows.map(r=>{
+    const opening = running;
+    const closing = opening + Number(r.received||0) - Number(r.issued||0);
+    running = closing;
+    const ha = haCoveredFor(r.date, r.operation);
+    const litresPerHa = (r.issued && ha) ? (Number(r.issued)/ha) : null;
+    const cost = Number(r.issued||0) * state.diesel.unitCost;
+    cumCost += cost;
+    return {...r, opening, closing, ha, litresPerHa, cost, cumCost};
+  });
+  const currentStock = out.length ? out[out.length-1].closing : state.diesel.openingStock;
+  const totalIssued = out.reduce((s,r)=>s+Number(r.issued||0),0);
+  const avgDaily = out.length ? totalIssued/out.length : 0;
+  const daysRemaining = avgDaily>0 ? currentStock/avgDaily : null;
+  const stockOutDate = daysRemaining!==null ? addDays(todayStr(), Math.round(daysRemaining)) : null;
+  const totalDieselCost = out.length ? out[out.length-1].cumCost : 0;
+  const fuelingActual = state.expenses.filter(e=>e.costHead==="Fueling (AGO)" && e.txnType==="Actual").reduce((s,e)=>s+Number(e.amount||0),0);
+  const reconciled = Math.abs(totalDieselCost-fuelingActual) < 1;
+  return {rows: out, currentStock, totalIssued, avgDaily, daysRemaining, stockOutDate, totalDieselCost, fuelingActual, reconciled};
+}
+
+function calcMachine(){
+  const rows = state.machineLog.map(r=>{
+    const machine = state.machines.find(m=>m.id===r.machineId);
+    const stdHours = machine ? machine.hoursPerDay : null;
+    const utilization = stdHours ? Number(r.hoursWorked||0)/stdHours : null;
+    const ha = haCoveredFor(r.date, r.operation);
+    const rate = (r.hoursWorked && ha) ? ha/Number(r.hoursWorked) : null;
+    return {...r, utilization, ha, rate};
+  });
+  const totalWorked = rows.reduce((s,r)=>s+Number(r.hoursWorked||0),0);
+  const totalIdle = rows.reduce((s,r)=>s+Number(r.idle||0),0);
+  const totalBreakdown = rows.reduce((s,r)=>s+Number(r.breakdown||0),0);
+  const denom = totalWorked+totalIdle+totalBreakdown;
+  const overallUtil = denom>0 ? totalWorked/denom : null;
+  const totalHa = rows.reduce((s,r)=>s+Number(r.ha||0),0);
+  const avgProductivity = totalWorked>0 ? totalHa/totalWorked : null;
+  return {rows, totalWorked, totalIdle, totalBreakdown, overallUtil, avgProductivity};
+}
+
+function calcProductivity(){
+  const perOp = state.operations.map(op=>{
+    const achieved = state.productivity.filter(p=>p.operation===op.name).reduce((s,p)=>s+Number(p.ha||0),0);
+    const pct = op.target>0 ? achieved/op.target : null;
+    return {name:op.name, target:op.target, achieved, pct};
+  });
+  const overall = perOp.length ? perOp.reduce((s,o)=>s+(o.pct||0),0)/perOp.length : 0;
+  const totalTargetHa = state.operations.reduce((s,o)=>s+Number(o.target||0),0);
+  return {perOp, overall, totalTargetHa};
+}
+
+function calcEVM(){
+  const bva = calcBudgetVsActual();
+  const totals = totalsFromBVA(bva);
+  const prod = calcProductivity();
+  const BAC = totals.budget;
+  const daysElapsed = Math.max(0, Math.min(state.project.days, daysBetween(state.project.startDate, state.asOfDate)+1));
+  const PV = BAC * Math.min(1, daysElapsed/state.project.days);
+  const EV = BAC * prod.overall;
+  const AC = totals.actual;
+  const CV = EV-AC;
+  const SV = EV-PV;
+  const CPI = AC>0 ? EV/AC : null;
+  const SPI = PV>0 ? EV/PV : null;
+  const EAC = (CPI && CPI>0) ? AC+(BAC-EV)/CPI : null;
+  const ETC = EAC!==null ? EAC-AC : null;
+  const VAC = EAC!==null ? BAC-EAC : null;
+  function health(v){ if(v===null) return "–"; if(v>=1) return "Healthy"; if(v>=0.9) return "Watch"; return "Critical"; }
+  return {BAC, daysElapsed, plannedDuration:state.project.days, PV, EV, AC, CV, SV, CPI, SPI, EAC, ETC, VAC,
+           costHealth: health(CPI), schedHealth: health(SPI), overallProgress: prod.overall};
+}
+
+function calcSCurve(){
+  const bva = calcBudgetVsActual();
+  const totals = totalsFromBVA(bva);
+  const BAC = totals.budget;
+  const totalTargetHa = state.operations.reduce((s,o)=>s+Number(o.target||0),0);
+  const out = [];
+  for(let d=0; d<state.project.days; d++){
+    const date = addDays(state.project.startDate, d);
+    const cumPV = BAC*Math.min(1,(d+1)/state.project.days);
+    const haToDate = state.productivity.filter(p=>p.date<=date).reduce((s,p)=>s+Number(p.ha||0),0);
+    const cumEV = BAC*(totalTargetHa>0 ? haToDate/totalTargetHa : 0);
+    const cumAC = state.expenses.filter(e=>e.txnType==="Actual" && e.date<=date).reduce((s,e)=>s+Number(e.amount||0),0);
+    out.push({date, cumPV, cumEV, cumAC});
+  }
+  return out;
+}
+
+function exceptionList(){
+  const bva = calcBudgetVsActual();
+  const ret = calcRetirement();
+  const issues = [];
+  bva.filter(r=>r.rag==="Critical"||r.rag==="Over Budget").forEach(r=>issues.push(`${r.name} is ${r.rag.toLowerCase()} (${fmtPct(r.pct)} consumed)`));
+  ret.filter(r=>r.overdue).forEach(r=>issues.push(`Advance to ${r.releasedTo} is overdue (${r.daysOut} days)`));
+  return issues;
+}
+
+/* ================= RENDER: SHELL ================= */
+function setTab(tab){
+  currentTab = tab;
+  document.querySelectorAll("#bottomnav button").forEach(b=>b.classList.toggle("active", b.dataset.tab===tab));
+  render();
+  document.getElementById("view").scrollTo?.(0,0);
+  window.scrollTo(0,0);
+}
+
+function render(){
+  document.getElementById("brandSub").textContent = state.project.site;
+  const issues = exceptionList();
+  const banner = document.getElementById("exceptionBanner");
+  if(issues.length){
+    banner.style.display = "block";
+    banner.innerHTML = "<b>Needs attention: </b>" + esc(issues.join(" · "));
+  } else {
+    banner.style.display = "none";
+  }
+  const view = document.getElementById("view");
+  if(currentTab==="dashboard") view.innerHTML = renderDashboard();
+  else if(currentTab==="expenses") view.innerHTML = renderExpenses();
+  else if(currentTab==="output") view.innerHTML = renderOutput();
+  else if(currentTab==="fieldops") view.innerHTML = renderFieldOps();
+  else if(currentTab==="advances") view.innerHTML = renderAdvances();
+  afterRenderHooks();
+}
+
+function afterRenderHooks(){
+  if(currentTab==="dashboard"){
+    drawBudgetChart();
+    drawProdChart();
+    drawSCurve();
+  }
+}
+
+/* ================= DASHBOARD ================= */
+function renderDashboard(){
+  const bva = calcBudgetVsActual();
+  const totals = totalsFromBVA(bva);
+  const evm = calcEVM();
+  const prod = calcProductivity();
+  const diesel = calcDiesel();
+  const machine = calcMachine();
+
+  const stratSegs = bva.map(r=>{
+    const widthPct = totals.budget>0 ? (r.budget/totals.budget*100) : 0;
+    return `<div class="seg rag-${ragClass(r.rag)}" style="width:${widthPct}%" title="${esc(r.name)}"></div>`;
+  }).join("");
+  const legend = bva.map(r=>`<div class="item"><span class="dot rag-${ragClass(r.rag)}"></span>${esc(r.name)} · ${fmtPct(r.pct)}</div>`).join("");
+
+  return `
+    <div class="card">
+      <div class="card-title">Budget health · by cost head</div>
+      <div class="strata-wrap">
+        <div class="strata">${stratSegs}</div>
+        <div class="strata-legend">${legend}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Portfolio summary</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="label">Approved Budget</div><div class="value">${fmtN(totals.budget)}</div></div>
+        <div class="stat"><div class="label">Actual + Committed</div><div class="value">${fmtN(totals.total)}</div></div>
+        <div class="stat"><div class="label">Available Balance</div><div class="value">${fmtN(totals.balance)}</div></div>
+        <div class="stat"><div class="label">% Consumed</div><div class="value">${fmtPct(totals.budget>0?totals.total/totals.budget:null)}</div></div>
+      </div>
+      <div class="chart-box"><canvas id="budgetChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Earned value management</div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>As of date</label>
+        <input type="date" value="${state.asOfDate}" onchange="updateAsOf(this.value)">
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><div class="label">BAC</div><div class="value small">${fmtN(evm.BAC)}</div></div>
+        <div class="stat"><div class="label">Days elapsed</div><div class="value small">${evm.daysElapsed} / ${evm.plannedDuration}</div></div>
+        <div class="stat"><div class="label">Planned Value (PV)</div><div class="value small">${fmtN(evm.PV)}</div></div>
+        <div class="stat"><div class="label">Earned Value (EV)</div><div class="value small">${fmtN(evm.EV)}</div></div>
+        <div class="stat"><div class="label">Actual Cost (AC)</div><div class="value small">${fmtN(evm.AC)}</div></div>
+        <div class="stat"><div class="label">Cost Variance</div><div class="value small">${fmtN(evm.CV)}</div></div>
+        <div class="stat"><div class="label">CPI</div><div class="value small">${evm.CPI!==null?evm.CPI.toFixed(2):'–'} <span class="chip ${ragClass(evm.costHealth)}">${evm.costHealth}</span></div></div>
+        <div class="stat"><div class="label">SPI</div><div class="value small">${evm.SPI!==null?evm.SPI.toFixed(2):'–'} <span class="chip ${ragClass(evm.schedHealth)}">${evm.schedHealth}</span></div></div>
+        <div class="stat"><div class="label">EAC (forecast total)</div><div class="value small">${evm.EAC!==null?fmtN(evm.EAC):'–'}</div></div>
+        <div class="stat"><div class="label">ETC (remaining forecast)</div><div class="value small">${evm.ETC!==null?fmtN(evm.ETC):'–'}</div></div>
+        <div class="stat"><div class="label">VAC (at completion)</div><div class="value small">${evm.VAC!==null?fmtN(evm.VAC):'–'}</div></div>
+        <div class="stat"><div class="label">Physical progress</div><div class="value small">${fmtPct(evm.overallProgress)}</div></div>
+      </div>
+      <div class="note">EAC/CAC is the same figure here: the forecast total cost at completion. AC counts only <i>Actual</i> (paid) spend, not Committed.</div>
+      <div class="chart-box"><canvas id="sCurveChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Physical output vs target</div>
+      ${prod.perOp.map(o=>`
+        <div class="op-row">
+          <div class="op-head"><span class="name">${esc(o.name)}</span><span class="figs">${fmtNum(o.achieved,1)} / ${o.target} Ha</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(o.pct||0)*100)}%; background:${(o.pct||0)>=1?'var(--leaf)':(o.pct||0)>=0.5?'var(--amber)':'var(--clay)'}"></div></div>
+        </div>`).join("")}
+      <div class="chart-box"><canvas id="prodChart"></canvas></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Diesel &amp; machine</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="label">Current Stock</div><div class="value small">${fmtNum(diesel.currentStock,1)} L</div></div>
+        <div class="stat"><div class="label">Avg Daily Use</div><div class="value small">${fmtNum(diesel.avgDaily,1)} L/day</div></div>
+        <div class="stat"><div class="label">Stock-Out Projection</div><div class="value small">${diesel.stockOutDate?fmtDate(diesel.stockOutDate):'–'}</div></div>
+        <div class="stat"><div class="label">Diesel Cost to Date</div><div class="value small">${fmtN(diesel.totalDieselCost)}</div></div>
+        <div class="stat"><div class="label">Machine Utilization</div><div class="value small">${fmtPct(machine.overallUtil)}</div></div>
+        <div class="stat"><div class="label">Avg Productivity</div><div class="value small">${machine.avgProductivity?machine.avgProductivity.toFixed(2):'–'} Ha/hr</div></div>
+      </div>
+      <div class="note">${diesel.reconciled?'Diesel ledger cost matches Fueling (AGO) actual spend ✓':'Diesel ledger cost ('+fmtN(diesel.totalDieselCost)+') does not yet match Fueling (AGO) actual spend ('+fmtN(diesel.fuelingActual)+') — a timing difference between fuel purchased and fuel issued, worth checking.'}</div>
+    </div>
+  `;
+}
+
+function updateAsOf(v){ state.asOfDate = v; saveState(); render(); }
+
+function drawBudgetChart(){
+  const el = document.getElementById("budgetChart"); if(!el) return;
+  if(typeof Chart === "undefined"){ el.parentElement.innerHTML = '<div class="note">Chart unavailable offline — figures above are still accurate.</div>'; return; }
+  const bva = calcBudgetVsActual();
+  if(charts.budget) charts.budget.destroy();
+  charts.budget = new Chart(el, {
+    type:'bar',
+    data:{ labels: bva.map(r=>r.name),
+      datasets:[
+        {label:'Approved Budget', data:bva.map(r=>r.budget), backgroundColor:'#3A4531'},
+        {label:'Committed+Actual', data:bva.map(r=>r.total), backgroundColor:'#C9793B'}
+      ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#A9AA98', font:{size:10}}}},
+      scales:{ x:{ticks:{color:'#A9AA98', font:{size:9}}, grid:{color:'#2A3524'}},
+               y:{ticks:{color:'#A9AA98', font:{size:9}}, grid:{color:'#2A3524'}} }
+    }
+  });
+}
+function drawProdChart(){
+  const el = document.getElementById("prodChart"); if(!el) return;
+  if(typeof Chart === "undefined"){ el.parentElement.innerHTML = '<div class="note">Chart unavailable offline — bars above still reflect live figures.</div>'; return; }
+  const prod = calcProductivity();
+  if(charts.prod) charts.prod.destroy();
+  charts.prod = new Chart(el, {
+    type:'bar',
+    data:{ labels: prod.perOp.map(o=>o.name),
+      datasets:[
+        {label:'Target (Ha)', data:prod.perOp.map(o=>o.target), backgroundColor:'#3A4531'},
+        {label:'Achieved (Ha)', data:prod.perOp.map(o=>o.achieved), backgroundColor:'#92A85A'}
+      ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#A9AA98', font:{size:10}}}},
+      scales:{ x:{ticks:{color:'#A9AA98', font:{size:9}}, grid:{color:'#2A3524'}},
+               y:{ticks:{color:'#A9AA98', font:{size:9}}, grid:{color:'#2A3524'}} }
+    }
+  });
+}
+function drawSCurve(){
+  const el = document.getElementById("sCurveChart"); if(!el) return;
+  if(typeof Chart === "undefined"){ el.parentElement.innerHTML = '<div class="note">S-curve chart unavailable offline — EVM figures above are still accurate.</div>'; return; }
+  const rows = calcSCurve();
+  if(charts.scurve) charts.scurve.destroy();
+  charts.scurve = new Chart(el, {
+    type:'line',
+    data:{ labels: rows.map(r=>fmtDate(r.date).replace(/ \d{4}$/,'')),
+      datasets:[
+        {label:'Planned (PV)', data:rows.map(r=>r.cumPV), borderColor:'#A9AA98', backgroundColor:'transparent', tension:0.15, pointRadius:0},
+        {label:'Earned (EV)', data:rows.map(r=>r.cumEV), borderColor:'#92A85A', backgroundColor:'transparent', tension:0.15, pointRadius:0},
+        {label:'Actual (AC)', data:rows.map(r=>r.cumAC), borderColor:'#C9793B', backgroundColor:'transparent', tension:0.15, pointRadius:0}
+      ]},
+    options:{responsive:true, maintainAspectRatio:false,
+      plugins:{legend:{labels:{color:'#A9AA98', font:{size:10}}}},
+      scales:{ x:{ticks:{color:'#A9AA98', font:{size:8}, maxRotation:60, minRotation:60}, grid:{color:'#2A3524'}},
+               y:{ticks:{color:'#A9AA98', font:{size:9}}, grid:{color:'#2A3524'}} }
+    }
+  });
+}
+
+/* ================= EXPENSES ================= */
+function renderExpenses(){
+  const list = [...state.expenses].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
+  const body = list.length ? list.map(e=>`
+    <div class="entry" onclick="openExpenseForm('${e.id}')">
+      <div class="entry-top">
+        <div>
+          <div class="entry-date">${fmtDate(e.date)}</div>
+          <div class="entry-title">${esc(e.item)||esc(e.costHead)}</div>
+        </div>
+        <div class="entry-amount">${fmtN(e.amount)}</div>
+      </div>
+      <div class="entry-meta">
+        <span class="chip neutral">${esc(e.costHead)}</span>
+        <span class="chip ${e.txnType==='Actual'?'actual':'committed'}">${e.txnType}</span>
+        ${e.advanceRef?`<span class="chip neutral">↳ advance</span>`:""}
+      </div>
+    </div>`).join("") : emptyState("🧾","No expenses logged yet","Tap “Add expense” to log your first spend.");
+  return `${body}${fab("Add expense", "openExpenseForm()")}`;
+}
+
+function openExpenseForm(id){
+  editing = {type:"expense", id: id||null};
+  const e = id ? state.expenses.find(x=>x.id===id) : {date:state.asOfDate, costHead:state.costHeads[0].name, item:"", payee:"", txnType:"Actual", amount:"", advanceRef:"", paymentSource:state.paymentSources[0], status:state.txnStatuses[0], approvedBy:"", receipt:"", remarks:""};
+  const chOpts = state.costHeads.map(c=>`<option value="${esc(c.name)}" ${c.name===e.costHead?'selected':''}>${esc(c.name)}</option>`).join("");
+  const psOpts = state.paymentSources.map(p=>`<option ${p===e.paymentSource?'selected':''}>${esc(p)}</option>`).join("");
+  const stOpts = state.txnStatuses.map(s=>`<option ${s===e.status?'selected':''}>${esc(s)}</option>`).join("");
+  const advOpts = `<option value="">None</option>` + state.advances.map(a=>`<option value="${a.id}" ${a.id===e.advanceRef?'selected':''}>${esc(a.releasedTo)} · ${fmtN(a.amount)}</option>`).join("");
+  openSheet(`
+    <h2>${id?"Edit":"Add"} Expense</h2>
+    <div class="field"><label>Date</label><input type="date" id="f_date" value="${e.date}"></div>
+    <div class="field"><label>Cost Head</label><select id="f_costHead">${chOpts}</select></div>
+    <div class="field"><label>Item / Description</label><input id="f_item" value="${esc(e.item)}" placeholder="e.g. Fueling for tractor operations"></div>
+    <div class="field"><label>Payee / Vendor</label><input id="f_payee" value="${esc(e.payee)}" placeholder="optional"></div>
+    <div class="field"><label>Type</label>
+      <div class="toggle-row">
+        <button type="button" class="${e.txnType==='Committed'?'active committed':''}" onclick="pick('f_txnType','Committed',this)">Committed</button>
+        <button type="button" class="${e.txnType==='Actual'?'active actual':''}" onclick="pick('f_txnType','Actual',this)">Actual</button>
+      </div>
+      <input type="hidden" id="f_txnType" value="${e.txnType}">
+    </div>
+    <div class="field"><label>Amount (₦)</label><input type="number" inputmode="decimal" id="f_amount" value="${e.amount}"></div>
+    <div class="field"><label>Linked Advance (optional)</label><select id="f_advanceRef">${advOpts}</select></div>
+    <div class="row2">
+      <div class="field"><label>Payment Source</label><select id="f_paymentSource">${psOpts}</select></div>
+      <div class="field"><label>Status</label><select id="f_status">${stOpts}</select></div>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Approved By</label><input id="f_approvedBy" value="${esc(e.approvedBy)}"></div>
+      <div class="field"><label>Receipt / Ref No.</label><input id="f_receipt" value="${esc(e.receipt)}"></div>
+    </div>
+    <div class="field"><label>Remarks</label><textarea id="f_remarks">${esc(e.remarks)}</textarea></div>
+    <div class="sheet-actions">
+      ${id?`<button class="btn btn-danger" onclick="deleteEntry('expenses','${id}')">Delete</button>`:""}
+      <button class="btn btn-primary" onclick="saveExpense()">Save</button>
+    </div>
+  `);
+}
+function pick(hiddenId, value, btn){
+  document.getElementById(hiddenId).value = value;
+  const row = btn.parentElement;
+  [...row.children].forEach(c=>c.classList.remove('active','committed','actual'));
+  btn.classList.add('active', value.toLowerCase());
+}
+function saveExpense(){
+  const rec = {
+    id: editing.id || uid(),
+    date: val('f_date'), costHead: val('f_costHead'), item: val('f_item'), payee: val('f_payee'),
+    txnType: val('f_txnType'), amount: Number(val('f_amount'))||0, advanceRef: val('f_advanceRef')||null,
+    paymentSource: val('f_paymentSource'), status: val('f_status'), approvedBy: val('f_approvedBy'),
+    receipt: val('f_receipt'), remarks: val('f_remarks')
+  };
+  upsert('expenses', rec);
+  closeSheet(); saveState(); render();
+}
+
+/* ================= OUTPUT (PRODUCTIVITY) ================= */
+function renderOutput(){
+  const prod = calcProductivity();
+  const list = [...state.productivity].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
+  const summary = `<div class="card"><div class="card-title">Progress by operation</div>${prod.perOp.map(o=>`
+    <div class="op-row">
+      <div class="op-head"><span class="name">${esc(o.name)}</span><span class="figs">${fmtNum(o.achieved,1)} / ${o.target} Ha (${fmtPct(o.pct)})</span></div>
+      <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(o.pct||0)*100)}%; background:${(o.pct||0)>=1?'var(--leaf)':(o.pct||0)>=0.5?'var(--amber)':'var(--clay)'}"></div></div>
+    </div>`).join("")}</div>`;
+  const body = list.length ? list.map(p=>`
+    <div class="entry" onclick="openOutputForm('${p.id}')">
+      <div class="entry-top">
+        <div><div class="entry-date">${fmtDate(p.date)}</div><div class="entry-title">${esc(p.operation)}</div></div>
+        <div class="entry-amount">${fmtNum(p.ha,2)} Ha</div>
+      </div>
+      ${p.remarks?`<div class="entry-meta">${esc(p.remarks)}</div>`:""}
+    </div>`).join("") : emptyState("🌾","No output logged yet","Tap “Log output” after each day in the field.");
+  return `${summary}${body}${fab("Log output","openOutputForm()")}`;
+}
+function openOutputForm(id){
+  editing = {type:"productivity", id: id||null};
+  const p = id ? state.productivity.find(x=>x.id===id) : {date:state.asOfDate, operation:state.operations[0].name, ha:"", remarks:""};
+  const opOpts = state.operations.map(o=>`<option ${o.name===p.operation?'selected':''}>${esc(o.name)}</option>`).join("");
+  openSheet(`
+    <h2>${id?"Edit":"Log"} Output</h2>
+    <div class="field"><label>Date</label><input type="date" id="f_date" value="${p.date}"></div>
+    <div class="field"><label>Operation</label><select id="f_operation">${opOpts}</select></div>
+    <div class="field"><label>Hectares Achieved (this day)</label><input type="number" inputmode="decimal" id="f_ha" value="${p.ha}"></div>
+    <div class="field"><label>Remarks</label><textarea id="f_remarks">${esc(p.remarks)}</textarea></div>
+    <div class="sheet-actions">
+      ${id?`<button class="btn btn-danger" onclick="deleteEntry('productivity','${id}')">Delete</button>`:""}
+      <button class="btn btn-primary" onclick="saveOutput()">Save</button>
+    </div>
+  `);
+}
+function saveOutput(){
+  const rec = {id: editing.id||uid(), date: val('f_date'), operation: val('f_operation'), ha: Number(val('f_ha'))||0, remarks: val('f_remarks')};
+  upsert('productivity', rec);
+  closeSheet(); saveState(); render();
+}
+
+/* ================= FIELD OPS (DIESEL + MACHINE) ================= */
+function renderFieldOps(){
+  const seg = `<div class="segment">
+    <button class="${fieldOpsSub==='diesel'?'active':''}" onclick="setFieldOpsSub('diesel')">Diesel</button>
+    <button class="${fieldOpsSub==='machine'?'active':''}" onclick="setFieldOpsSub('machine')">Machines</button>
+  </div>`;
+  return seg + (fieldOpsSub==='diesel' ? renderDieselTab() : renderMachineTab());
+}
+function setFieldOpsSub(s){ fieldOpsSub = s; render(); }
+
+function renderDieselTab(){
+  const d = calcDiesel();
+  const summary = `<div class="card"><div class="card-title">Stock summary</div>
+    <div class="stat-grid">
+      <div class="stat"><div class="label">Current Stock</div><div class="value">${fmtNum(d.currentStock,1)} L</div></div>
+      <div class="stat"><div class="label">Total Issued</div><div class="value">${fmtNum(d.totalIssued,1)} L</div></div>
+      <div class="stat"><div class="label">Avg Daily Use</div><div class="value">${fmtNum(d.avgDaily,1)} L/day</div></div>
+      <div class="stat"><div class="label">Stock-Out Est.</div><div class="value small">${d.stockOutDate?fmtDate(d.stockOutDate):'–'}</div></div>
+    </div></div>`;
+  const rows = [...d.rows].sort((a,b)=> a.date<b.date?1:-1);
+  const body = rows.length ? rows.map(r=>`
+    <div class="entry" onclick="openDieselForm('${r.id}')">
+      <div class="entry-top">
+        <div><div class="entry-date">${fmtDate(r.date)}</div><div class="entry-title">${esc(r.operation)||'—'}</div></div>
+        <div class="entry-amount">${fmtN(r.cost)}</div>
+      </div>
+      <div class="entry-meta">
+        <span class="chip neutral">+${fmtNum(r.received,1)} L</span>
+        <span class="chip neutral">-${fmtNum(r.issued,1)} L</span>
+        <span class="chip neutral">closing ${fmtNum(r.closing,1)} L</span>
+      </div>
+    </div>`).join("") : emptyState("⛽","No diesel entries yet","Log receipts and daily consumption here.");
+  return `${summary}${body}${fab("Log diesel","openDieselForm()")}`;
+}
+function openDieselForm(id){
+  editing = {type:"diesel", id:id||null};
+  const r = id ? state.dieselLog.find(x=>x.id===id) : {date:state.asOfDate, received:"", issued:"", operation:"", remarks:""};
+  const opOpts = `<option value="">—</option>` + state.operations.map(o=>`<option ${o.name===r.operation?'selected':''}>${esc(o.name)}</option>`).join("");
+  openSheet(`
+    <h2>${id?"Edit":"Log"} Diesel</h2>
+    <div class="field"><label>Date</label><input type="date" id="f_date" value="${r.date}"></div>
+    <div class="row2">
+      <div class="field"><label>Received (L)</label><input type="number" inputmode="decimal" id="f_received" value="${r.received}"></div>
+      <div class="field"><label>Issued (L)</label><input type="number" inputmode="decimal" id="f_issued" value="${r.issued}"></div>
+    </div>
+    <div class="field"><label>Operation Fueled</label><select id="f_operation">${opOpts}</select></div>
+    <div class="field"><label>Remarks</label><textarea id="f_remarks">${esc(r.remarks)}</textarea></div>
+    <div class="sheet-actions">
+      ${id?`<button class="btn btn-danger" onclick="deleteEntry('dieselLog','${id}')">Delete</button>`:""}
+      <button class="btn btn-primary" onclick="saveDiesel()">Save</button>
+    </div>
+  `);
+}
+function saveDiesel(){
+  const rec = {id:editing.id||uid(), date:val('f_date'), received:Number(val('f_received'))||0, issued:Number(val('f_issued'))||0, operation:val('f_operation'), remarks:val('f_remarks')};
+  upsert('dieselLog', rec);
+  closeSheet(); saveState(); render();
+}
+
+function renderMachineTab(){
+  const m = calcMachine();
+  const summary = `<div class="card"><div class="card-title">Machine performance</div>
+    <div class="stat-grid">
+      <div class="stat"><div class="label">Hours Worked</div><div class="value">${fmtNum(m.totalWorked,0)}</div></div>
+      <div class="stat"><div class="label">Utilization</div><div class="value">${fmtPct(m.overallUtil)}</div></div>
+      <div class="stat"><div class="label">Idle Hours</div><div class="value">${fmtNum(m.totalIdle,0)}</div></div>
+      <div class="stat"><div class="label">Avg Ha/Hour</div><div class="value">${m.avgProductivity?m.avgProductivity.toFixed(2):'–'}</div></div>
+    </div></div>`;
+  const rows = [...m.rows].sort((a,b)=> a.date<b.date?1:-1);
+  const body = rows.length ? rows.map(r=>`
+    <div class="entry" onclick="openMachineForm('${r.id}')">
+      <div class="entry-top">
+        <div><div class="entry-date">${fmtDate(r.date)}</div><div class="entry-title">${esc(r.machineId)} · ${esc(r.operation)}</div></div>
+        <div class="entry-amount">${fmtPct(r.utilization)}</div>
+      </div>
+      <div class="entry-meta">
+        <span class="chip neutral">worked ${r.hoursWorked}h</span>
+        <span class="chip neutral">idle ${r.idle||0}h</span>
+        <span class="chip neutral">down ${r.breakdown||0}h</span>
+      </div>
+    </div>`).join("") : emptyState("🚜","No machine hours logged yet","Log daily hours for each machine here.");
+  return `${summary}${body}${fab("Log machine day","openMachineForm()")}`;
+}
+function openMachineForm(id){
+  editing = {type:"machine", id:id||null};
+  const r = id ? state.machineLog.find(x=>x.id===id) : {date:state.asOfDate, machineId:state.machines[0].id, operation:state.operations[0].name, hoursWorked:"", idle:"", breakdown:"", remarks:""};
+  const mOpts = state.machines.map(mm=>`<option ${mm.id===r.machineId?'selected':''}>${esc(mm.id)}</option>`).join("");
+  const opOpts = state.operations.map(o=>`<option ${o.name===r.operation?'selected':''}>${esc(o.name)}</option>`).join("");
+  openSheet(`
+    <h2>${id?"Edit":"Log"} Machine Day</h2>
+    <div class="field"><label>Date</label><input type="date" id="f_date" value="${r.date}"></div>
+    <div class="row2">
+      <div class="field"><label>Machine</label><select id="f_machineId">${mOpts}</select></div>
+      <div class="field"><label>Operation</label><select id="f_operation">${opOpts}</select></div>
+    </div>
+    <div class="field"><label>Hours Worked</label><input type="number" inputmode="decimal" id="f_hoursWorked" value="${r.hoursWorked}"></div>
+    <div class="row2">
+      <div class="field"><label>Idle Hours</label><input type="number" inputmode="decimal" id="f_idle" value="${r.idle}"></div>
+      <div class="field"><label>Breakdown Hours</label><input type="number" inputmode="decimal" id="f_breakdown" value="${r.breakdown}"></div>
+    </div>
+    <div class="field"><label>Remarks</label><textarea id="f_remarks">${esc(r.remarks)}</textarea></div>
+    <div class="sheet-actions">
+      ${id?`<button class="btn btn-danger" onclick="deleteEntry('machineLog','${id}')">Delete</button>`:""}
+      <button class="btn btn-primary" onclick="saveMachine()">Save</button>
+    </div>
+  `);
+}
+function saveMachine(){
+  const rec = {id:editing.id||uid(), date:val('f_date'), machineId:val('f_machineId'), operation:val('f_operation'),
+    hoursWorked:Number(val('f_hoursWorked'))||0, idle:Number(val('f_idle'))||0, breakdown:Number(val('f_breakdown'))||0, remarks:val('f_remarks')};
+  upsert('machineLog', rec);
+  closeSheet(); saveState(); render();
+}
+
+/* ================= ADVANCES ================= */
+function renderAdvances(){
+  const ret = calcRetirement();
+  const list = [...ret].sort((a,b)=> a.date<b.date?1:-1);
+  const body = list.length ? list.map(a=>`
+    <div class="entry" onclick="openAdvanceForm('${a.id}')">
+      <div class="entry-top">
+        <div><div class="entry-date">${fmtDate(a.date)}</div><div class="entry-title">${esc(a.releasedTo)}</div></div>
+        <div class="entry-amount">${fmtN(a.amount)}</div>
+      </div>
+      <div class="entry-meta">
+        <span class="chip ${a.status==='Fully Retired'?'healthy':a.status==='Partially Retired'?'watch':'critical'}">${a.status}</span>
+        ${a.overdue?`<span class="chip over">OVERDUE · ${a.daysOut}d</span>`:""}
+        <span>retired ${fmtN(a.retired)} · bal ${fmtN(a.balance)}</span>
+      </div>
+      ${a.purpose?`<div class="entry-meta">${esc(a.purpose)}</div>`:""}
+    </div>`).join("") : emptyState("💳","No advances logged yet","Log a cash advance and its retirement will track automatically from Expenses.");
+  return `${body}${fab("Log advance","openAdvanceForm()")}`;
+}
+function openAdvanceForm(id){
+  editing = {type:"advance", id:id||null};
+  const a = id ? state.advances.find(x=>x.id===id) : {date:state.asOfDate, releasedTo:"", purpose:"", amount:"", approvedBy:""};
+  openSheet(`
+    <h2>${id?"Edit":"Log"} Advance</h2>
+    <div class="field"><label>Date Released</label><input type="date" id="f_date" value="${a.date}"></div>
+    <div class="field"><label>Released To</label><input id="f_releasedTo" value="${esc(a.releasedTo)}"></div>
+    <div class="field"><label>Purpose</label><input id="f_purpose" value="${esc(a.purpose)}"></div>
+    <div class="field"><label>Amount Released (₦)</label><input type="number" inputmode="decimal" id="f_amount" value="${a.amount}"></div>
+    <div class="field"><label>Approved By</label><input id="f_approvedBy" value="${esc(a.approvedBy)}"></div>
+    <div class="note">This advance's ID will appear in the Expenses form's "Linked Advance" list — tag any spend against it there to retire it.</div>
+    <div class="sheet-actions">
+      ${id?`<button class="btn btn-danger" onclick="deleteEntry('advances','${id}')">Delete</button>`:""}
+      <button class="btn btn-primary" onclick="saveAdvance()">Save</button>
+    </div>
+  `);
+}
+function saveAdvance(){
+  const rec = {id:editing.id||uid(), date:val('f_date'), releasedTo:val('f_releasedTo'), purpose:val('f_purpose'), amount:Number(val('f_amount'))||0, approvedBy:val('f_approvedBy')};
+  upsert('advances', rec);
+  closeSheet(); saveState(); render();
+}
+
+/* ================= SETTINGS ================= */
+function openSettings(){
+  const p = state.project;
+  openSheet(`
+    <h2>Settings</h2>
+    <div class="settings-section">
+      <h3>Project</h3>
+      <div class="field"><label>Name</label><input id="s_name" value="${esc(p.name)}"></div>
+      <div class="field"><label>Site</label><input id="s_site" value="${esc(p.site)}"></div>
+      <div class="row2">
+        <div class="field"><label>Start Date</label><input type="date" id="s_startDate" value="${p.startDate}"></div>
+        <div class="field"><label>Planned Duration (days)</label><input type="number" id="s_days" value="${p.days}"></div>
+      </div>
+      <div class="field"><label>Project Manager</label><input id="s_manager" value="${esc(p.manager)}"></div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Cost heads &amp; approved budget</h3>
+      <div id="chRows">${state.costHeads.map((c,i)=>`
+        <div class="list-row">
+          <input data-ch-name value="${esc(c.name)}" placeholder="Cost head">
+          <input data-ch-budget type="number" value="${c.budget}" placeholder="Budget ₦" style="max-width:120px;">
+          <button class="rm" onclick="this.parentElement.remove()">✕</button>
+        </div>`).join("")}</div>
+      <button class="add-row-btn" onclick="addRow('chRows','<input data-ch-name placeholder=\\'Cost head\\'><input data-ch-budget type=\\'number\\' placeholder=\\'Budget ₦\\' style=\\'max-width:120px;\\'>')">+ Add cost head</button>
+    </div>
+
+    <div class="settings-section">
+      <h3>Operations &amp; targets (Ha)</h3>
+      <div id="opRows">${state.operations.map(o=>`
+        <div class="list-row">
+          <input data-op-name value="${esc(o.name)}" placeholder="Operation">
+          <input data-op-target type="number" value="${o.target}" placeholder="Target Ha" style="max-width:100px;">
+          <button class="rm" onclick="this.parentElement.remove()">✕</button>
+        </div>`).join("")}</div>
+      <button class="add-row-btn" onclick="addRow('opRows','<input data-op-name placeholder=\\'Operation\\'><input data-op-target type=\\'number\\' placeholder=\\'Target Ha\\' style=\\'max-width:100px;\\'>')">+ Add operation</button>
+    </div>
+
+    <div class="settings-section">
+      <h3>Thresholds</h3>
+      <div class="row2">
+        <div class="field"><label>Watch (%)</label><input type="number" id="s_watch" value="${state.thresholds.watch*100}"></div>
+        <div class="field"><label>Critical (%)</label><input type="number" id="s_critical" value="${state.thresholds.critical*100}"></div>
+      </div>
+      <div class="field"><label>Advance Overdue After (days)</label><input type="number" id="s_overdueDays" value="${state.thresholds.overdueDays}"></div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Diesel</h3>
+      <div class="row2">
+        <div class="field"><label>Unit Cost (₦/L)</label><input type="number" id="s_unitCost" value="${state.diesel.unitCost}"></div>
+        <div class="field"><label>Opening Stock (L)</label><input type="number" id="s_openingStock" value="${state.diesel.openingStock}"></div>
+      </div>
+    </div>
+
+    <div class="sheet-actions"><button class="btn btn-primary" onclick="saveSettings()">Save settings</button></div>
+
+    <div class="settings-section" style="margin-top:22px;">
+      <h3>Data</h3>
+      <div class="sheet-actions">
+        <button class="btn btn-ghost" onclick="exportData()">Export backup (.json)</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('importFile').click()">Import backup</button>
+      </div>
+      <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(this.files[0])">
+      <div class="note">Everything is stored on this device (or your Claude account, when opened as an Artifact) — export a backup now and then so a lost phone doesn't lose your field records.</div>
+      <div class="sheet-actions" style="margin-top:10px;">
+        <button class="btn btn-danger" onclick="if(confirm('This clears every entry on this device. Export a backup first. Continue?')) resetAll()">Reset all data</button>
+      </div>
+    </div>
+  `);
+}
+function addRow(containerId, html){
+  const div = document.createElement('div'); div.className='list-row';
+  div.innerHTML = html + `<button class="rm" onclick="this.parentElement.remove()">✕</button>`;
+  document.getElementById(containerId).appendChild(div);
+}
+function saveSettings(){
+  state.project.name = val('s_name'); state.project.site = val('s_site');
+  state.project.startDate = val('s_startDate'); state.project.days = Number(val('s_days'))||20;
+  state.project.manager = val('s_manager');
+  state.costHeads = [...document.querySelectorAll('#chRows .list-row')].map(row=>({
+    name: row.querySelector('[data-ch-name]').value.trim(),
+    budget: Number(row.querySelector('[data-ch-budget]').value)||0
+  })).filter(c=>c.name);
+  state.operations = [...document.querySelectorAll('#opRows .list-row')].map(row=>({
+    name: row.querySelector('[data-op-name]').value.trim(),
+    target: Number(row.querySelector('[data-op-target]').value)||0,
+    rate: null
+  })).filter(o=>o.name);
+  state.thresholds.watch = (Number(val('s_watch'))||60)/100;
+  state.thresholds.critical = (Number(val('s_critical'))||85)/100;
+  state.thresholds.overdueDays = Number(val('s_overdueDays'))||14;
+  state.diesel.unitCost = Number(val('s_unitCost'))||0;
+  state.diesel.openingStock = Number(val('s_openingStock'))||0;
+  closeSheet(); saveState(); render();
+}
+function exportData(){
+  const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'bebi-field-ledger-backup-'+todayStr()+'.json';
+  a.click();
+}
+function importData(file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = JSON.parse(e.target.result);
+      state = data; closeSheet(); saveState(); render();
+      alert('Backup imported.');
+    }catch(err){ alert('That file could not be read as a backup.'); }
+  };
+  reader.readAsText(file);
+}
+function resetAll(){ state = defaultState(); saveState(); closeSheet(); render(); }
+
+/* ================= GENERIC HELPERS ================= */
+function val(id){ const el = document.getElementById(id); return el ? el.value : ""; }
+function upsert(arrName, rec){
+  const arr = state[arrName];
+  const idx = arr.findIndex(x=>x.id===rec.id);
+  if(idx>=0) arr[idx]=rec; else arr.push(rec);
+}
+function deleteEntry(arrName, id){
+  state[arrName] = state[arrName].filter(x=>x.id!==id);
+  closeSheet(); saveState(); render();
+}
+function fab(label, onclick){
+  return `<div class="fab-row"><button class="fab" onclick="${onclick}">+ ${label}</button></div>`;
+}
+function emptyState(icon, title, sub){
+  return `<div class="empty-state"><div class="big">${icon}</div><div style="color:var(--parchment); font-weight:500; margin-bottom:4px;">${title}</div><div>${sub}</div></div>`;
+}
+function openSheet(html){
+  document.getElementById('sheet').innerHTML = `<button class="close-x" onclick="closeSheet()">&times;</button>` + html;
+  document.getElementById('sheetOverlay').style.display = 'flex';
+}
+function closeSheet(){ document.getElementById('sheetOverlay').style.display = 'none'; editing={type:null,id:null}; }
+
+/* ================= BOOT ================= */
+(async function init(){
+  state = await loadState();
+  if(!state.asOfDate) state.asOfDate = todayStr();
+  setTab('dashboard');
+})();
+</script>
+</body>
+</html>
