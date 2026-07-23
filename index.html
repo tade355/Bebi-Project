@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --bg: #171D14;
@@ -263,6 +264,20 @@
 const STORAGE_KEY = "bebi-field-ledger-v2";
 let hasCloudStorage = (typeof window.storage !== "undefined" && window.storage !== null);
 
+/* ---------------- Google Drive sync ---------------- */
+const GOOGLE_CLIENT_ID = "324095142444-8gcs36pstimaead3dc0vuas1d68noo1n.apps.googleusercontent.com";
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+const DRIVE_FILE_NAME = "bebi-field-ledger-data.json";
+const DRIVE_AUTOCONNECT_KEY = "bebi-field-ledger-drive-autoconnect";
+let driveTokenClient = null;
+let driveAccessToken = null;
+let driveFileId = null;
+let driveStatus = "disconnected"; // disconnected | connecting | connected | error
+let driveErrorMsg = "";
+let driveLastSync = null;
+let driveSyncInFlight = false;
+let settingsSheetOpen = false;
+
 function defaultState(){
   return {
     project: {
@@ -334,7 +349,8 @@ function defaultState(){
       {id:"MCH-0001", date:"2026-07-21", machineId:"Tractor-06", operation:"Ploughing", hoursWorked:6.67, idle:2, breakdown:1, remarks:"Battery Issues"},
       {id:"MCH-0002", date:"2026-07-22", machineId:"Tractor-06", operation:"Ploughing", hoursWorked:3.23, idle:5, breakdown:3, remarks:"Battery Issues and Alternator"}
     ],
-    asOfDate: todayStr()
+    asOfDate: todayStr(),
+    configUpdatedAt: Date.now()
   };
 }
 
@@ -372,7 +388,11 @@ async function saveState(){
     try{ localStorage.setItem(STORAGE_KEY, json); }
     catch(e){ console.error("local storage save failed", e); }
   }
+  if(driveAccessToken) driveSyncNow();
 }
+
+/* soft-deleted records stay in the arrays (so deletes can sync) but are hidden everywhere else */
+function active(arr){ return (arr||[]).filter(x=>!x.deleted); }
 
 /* ---------------- helpers ---------------- */
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
@@ -389,8 +409,8 @@ function ragClass(r){ if(r==="Healthy") return "healthy"; if(r==="Watch") return
 /* ---------------- core calculations (mirrors the Excel workbook) ---------------- */
 function calcBudgetVsActual(){
   return state.costHeads.map(ch=>{
-    const committed = state.expenses.filter(e=>e.costHead===ch.name && e.txnType==="Committed").reduce((s,e)=>s+Number(e.amount||0),0);
-    const actual = state.expenses.filter(e=>e.costHead===ch.name && e.txnType==="Actual").reduce((s,e)=>s+Number(e.amount||0),0);
+    const committed = active(state.expenses).filter(e=>e.costHead===ch.name && e.txnType==="Committed").reduce((s,e)=>s+Number(e.amount||0),0);
+    const actual = active(state.expenses).filter(e=>e.costHead===ch.name && e.txnType==="Actual").reduce((s,e)=>s+Number(e.amount||0),0);
     const total = committed+actual;
     const balance = ch.budget-total;
     const pct = ch.budget>0 ? total/ch.budget : null;
@@ -408,8 +428,8 @@ function totalsFromBVA(bva){
 }
 
 function calcRetirement(){
-  return state.advances.map(a=>{
-    const retired = state.expenses.filter(e=>e.advanceRef===a.id).reduce((s,e)=>s+Number(e.amount||0),0);
+  return active(state.advances).map(a=>{
+    const retired = active(state.expenses).filter(e=>e.advanceRef===a.id).reduce((s,e)=>s+Number(e.amount||0),0);
     const balance = a.amount-retired;
     let status = "Pending";
     if(retired>=a.amount && a.amount>0) status="Fully Retired";
@@ -422,11 +442,11 @@ function calcRetirement(){
 
 function haCoveredFor(date, operation){
   if(!operation) return 0;
-  return state.productivity.filter(p=>p.date===date && p.operation===operation).reduce((s,p)=>s+Number(p.ha||0),0);
+  return active(state.productivity).filter(p=>p.date===date && p.operation===operation).reduce((s,p)=>s+Number(p.ha||0),0);
 }
 
 function calcDiesel(){
-  const rows = [...state.dieselLog].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
+  const rows = [...active(state.dieselLog)].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0);
   let running = state.diesel.openingStock;
   let cumCost = 0;
   const out = rows.map(r=>{
@@ -445,13 +465,13 @@ function calcDiesel(){
   const daysRemaining = avgDaily>0 ? currentStock/avgDaily : null;
   const stockOutDate = daysRemaining!==null ? addDays(todayStr(), Math.round(daysRemaining)) : null;
   const totalDieselCost = out.length ? out[out.length-1].cumCost : 0;
-  const fuelingActual = state.expenses.filter(e=>e.costHead==="Fueling (AGO)" && e.txnType==="Actual").reduce((s,e)=>s+Number(e.amount||0),0);
+  const fuelingActual = active(state.expenses).filter(e=>e.costHead==="Fueling (AGO)" && e.txnType==="Actual").reduce((s,e)=>s+Number(e.amount||0),0);
   const reconciled = Math.abs(totalDieselCost-fuelingActual) < 1;
   return {rows: out, currentStock, totalIssued, avgDaily, daysRemaining, stockOutDate, totalDieselCost, fuelingActual, reconciled};
 }
 
 function calcMachine(){
-  const rows = state.machineLog.map(r=>{
+  const rows = active(state.machineLog).map(r=>{
     const machine = state.machines.find(m=>m.id===r.machineId);
     const stdHours = machine ? machine.hoursPerDay : null;
     const utilization = stdHours ? Number(r.hoursWorked||0)/stdHours : null;
@@ -471,7 +491,7 @@ function calcMachine(){
 
 function calcProductivity(){
   const perOp = state.operations.map(op=>{
-    const achieved = state.productivity.filter(p=>p.operation===op.name).reduce((s,p)=>s+Number(p.ha||0),0);
+    const achieved = active(state.productivity).filter(p=>p.operation===op.name).reduce((s,p)=>s+Number(p.ha||0),0);
     const pct = op.target>0 ? achieved/op.target : null;
     return {name:op.name, target:op.target, achieved, pct};
   });
@@ -510,9 +530,9 @@ function calcSCurve(){
   for(let d=0; d<state.project.days; d++){
     const date = addDays(state.project.startDate, d);
     const cumPV = BAC*Math.min(1,(d+1)/state.project.days);
-    const haToDate = state.productivity.filter(p=>p.date<=date).reduce((s,p)=>s+Number(p.ha||0),0);
+    const haToDate = active(state.productivity).filter(p=>p.date<=date).reduce((s,p)=>s+Number(p.ha||0),0);
     const cumEV = BAC*(totalTargetHa>0 ? haToDate/totalTargetHa : 0);
-    const cumAC = state.expenses.filter(e=>e.txnType==="Actual" && e.date<=date).reduce((s,e)=>s+Number(e.amount||0),0);
+    const cumAC = active(state.expenses).filter(e=>e.txnType==="Actual" && e.date<=date).reduce((s,e)=>s+Number(e.amount||0),0);
     out.push({date, cumPV, cumEV, cumAC});
   }
   return out;
@@ -710,7 +730,7 @@ function drawSCurve(){
 
 /* ================= EXPENSES ================= */
 function renderExpenses(){
-  const list = [...state.expenses].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
+  const list = [...active(state.expenses)].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
   const body = list.length ? list.map(e=>`
     <div class="entry" onclick="openExpenseForm('${e.id}')">
       <div class="entry-top">
@@ -735,7 +755,7 @@ function openExpenseForm(id){
   const chOpts = state.costHeads.map(c=>`<option value="${esc(c.name)}" ${c.name===e.costHead?'selected':''}>${esc(c.name)}</option>`).join("");
   const psOpts = state.paymentSources.map(p=>`<option ${p===e.paymentSource?'selected':''}>${esc(p)}</option>`).join("");
   const stOpts = state.txnStatuses.map(s=>`<option ${s===e.status?'selected':''}>${esc(s)}</option>`).join("");
-  const advOpts = `<option value="">None</option>` + state.advances.map(a=>`<option value="${a.id}" ${a.id===e.advanceRef?'selected':''}>${esc(a.releasedTo)} · ${fmtN(a.amount)}</option>`).join("");
+  const advOpts = `<option value="">None</option>` + active(state.advances).map(a=>`<option value="${a.id}" ${a.id===e.advanceRef?'selected':''}>${esc(a.releasedTo)} · ${fmtN(a.amount)}</option>`).join("");
   openSheet(`
     <h2>${id?"Edit":"Add"} Expense</h2>
     <div class="field"><label>Date</label><input type="date" id="f_date" value="${e.date}"></div>
@@ -787,7 +807,7 @@ function saveExpense(){
 /* ================= OUTPUT (PRODUCTIVITY) ================= */
 function renderOutput(){
   const prod = calcProductivity();
-  const list = [...state.productivity].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
+  const list = [...active(state.productivity)].sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
   const summary = `<div class="card"><div class="card-title">Progress by operation</div>${prod.perOp.map(o=>`
     <div class="op-row">
       <div class="op-head"><span class="name">${esc(o.name)}</span><span class="figs">${fmtNum(o.achieved,1)} / ${o.target} Ha (${fmtPct(o.pct)})</span></div>
@@ -983,6 +1003,7 @@ function saveAdvance(){
 
 /* ================= SETTINGS ================= */
 function openSettings(){
+  settingsSheetOpen = true;
   const p = state.project;
   openSheet(`
     <h2>Settings</h2>
@@ -1039,6 +1060,19 @@ function openSettings(){
     <div class="sheet-actions"><button class="btn btn-primary" onclick="saveSettings()">Save settings</button></div>
 
     <div class="settings-section" style="margin-top:22px;">
+      <h3>Google Drive Sync</h3>
+      <div class="note">${driveStatusNote()}</div>
+      <div class="sheet-actions" style="margin-top:10px;">
+        ${driveStatus==="connected" ? `
+          <button class="btn btn-ghost" onclick="driveSyncNow()">Sync now</button>
+          <button class="btn btn-danger" onclick="driveDisconnect()">Disconnect</button>
+        ` : `
+          <button class="btn btn-primary" onclick="driveConnect()">${driveStatus==="connecting"?"Connecting…":"Connect Google Drive"}</button>
+        `}
+      </div>
+    </div>
+
+    <div class="settings-section" style="margin-top:22px;">
       <h3>Data</h3>
       <div class="sheet-actions">
         <button class="btn btn-ghost" onclick="exportData()">Export backup (.json)</button>
@@ -1075,6 +1109,7 @@ function saveSettings(){
   state.thresholds.overdueDays = Number(val('s_overdueDays'))||14;
   state.diesel.unitCost = Number(val('s_unitCost'))||0;
   state.diesel.openingStock = Number(val('s_openingStock'))||0;
+  state.configUpdatedAt = Date.now();
   closeSheet(); saveState(); render();
 }
 function exportData(){
@@ -1098,15 +1133,157 @@ function importData(file){
 }
 function resetAll(){ state = defaultState(); saveState(); closeSheet(); render(); }
 
+/* ================= GOOGLE DRIVE SYNC ================= */
+function driveEnsureTokenClient(){
+  if(driveTokenClient) return driveTokenClient;
+  driveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: (resp)=>{
+      if(!resp || resp.error){
+        driveStatus = "error"; driveErrorMsg = (resp&&resp.error)||"sign-in failed";
+        refreshSettingsIfOpen(); return;
+      }
+      driveAccessToken = resp.access_token;
+      try{ localStorage.setItem(DRIVE_AUTOCONNECT_KEY, "1"); }catch(e){}
+      driveStatus = "connected";
+      driveSyncNow();
+    }
+  });
+  return driveTokenClient;
+}
+function driveConnect(){
+  if(typeof google === "undefined" || !google.accounts){
+    driveStatus = "error"; driveErrorMsg = "Google sign-in script didn't load — check your connection.";
+    refreshSettingsIfOpen(); return;
+  }
+  driveStatus = "connecting"; refreshSettingsIfOpen();
+  driveEnsureTokenClient().requestAccessToken({prompt:"consent"});
+}
+function driveTryAutoConnect(){
+  let want = false;
+  try{ want = localStorage.getItem(DRIVE_AUTOCONNECT_KEY)==="1"; }catch(e){}
+  if(!want) return;
+  if(typeof google === "undefined" || !google.accounts) return;
+  driveEnsureTokenClient().requestAccessToken({prompt:""});
+}
+function driveDisconnect(){
+  if(driveAccessToken && typeof google!=="undefined" && google.accounts){
+    try{ google.accounts.oauth2.revoke(driveAccessToken, ()=>{}); }catch(e){}
+  }
+  driveAccessToken = null; driveFileId = null; driveStatus = "disconnected"; driveErrorMsg = ""; driveLastSync = null;
+  try{ localStorage.removeItem(DRIVE_AUTOCONNECT_KEY); }catch(e){}
+  refreshSettingsIfOpen();
+}
+async function driveFindFile(){
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,modifiedTime)&spaces=drive`, {
+    headers:{Authorization:`Bearer ${driveAccessToken}`}
+  });
+  if(!res.ok) throw new Error("drive-list-failed-"+res.status);
+  const data = await res.json();
+  return (data.files && data.files.length) ? data.files[0] : null;
+}
+async function driveCreateFile(contentObj){
+  const boundary = "bebilledgerboundary";
+  const metadata = {name: DRIVE_FILE_NAME, mimeType:"application/json"};
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`+
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(contentObj)}\r\n`+
+    `--${boundary}--`;
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id", {
+    method:"POST",
+    headers:{Authorization:`Bearer ${driveAccessToken}`, "Content-Type":`multipart/related; boundary=${boundary}`},
+    body
+  });
+  if(!res.ok) throw new Error("drive-create-failed-"+res.status);
+  const data = await res.json();
+  return data.id;
+}
+async function driveDownloadFile(fileId){
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers:{Authorization:`Bearer ${driveAccessToken}`}
+  });
+  if(!res.ok) throw new Error("drive-download-failed-"+res.status);
+  return await res.json();
+}
+async function driveUpdateFile(fileId, contentObj){
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method:"PATCH",
+    headers:{Authorization:`Bearer ${driveAccessToken}`, "Content-Type":"application/json"},
+    body: JSON.stringify(contentObj)
+  });
+  if(!res.ok) throw new Error("drive-update-failed-"+res.status);
+}
+function mergeArraysById(localArr, remoteArr){
+  const map = new Map();
+  (remoteArr||[]).forEach(r=>map.set(r.id, r));
+  (localArr||[]).forEach(l=>{
+    const r = map.get(l.id);
+    if(!r){ map.set(l.id, l); return; }
+    map.set(l.id, (l.updatedAt||0) >= (r.updatedAt||0) ? l : r);
+  });
+  return [...map.values()];
+}
+function mergeStates(local, remote){
+  if(!remote) return local;
+  const merged = {...local};
+  ["expenses","productivity","advances","dieselLog","machineLog"].forEach(key=>{
+    merged[key] = mergeArraysById(local[key], remote[key]);
+  });
+  if((remote.configUpdatedAt||0) > (local.configUpdatedAt||0)){
+    ["project","costHeads","operations","thresholds","diesel","machines","txnTypes","paymentSources","txnStatuses"].forEach(key=>{
+      merged[key] = remote[key];
+    });
+    merged.configUpdatedAt = remote.configUpdatedAt;
+  }
+  return merged;
+}
+async function driveSyncNow(){
+  if(!driveAccessToken || driveSyncInFlight) return;
+  driveSyncInFlight = true;
+  try{
+    if(!driveFileId){
+      const found = await driveFindFile();
+      if(found) driveFileId = found.id;
+    }
+    let remote = null;
+    if(driveFileId) remote = await driveDownloadFile(driveFileId);
+    state = mergeStates(state, remote);
+    await saveState();
+    if(!driveFileId) driveFileId = await driveCreateFile(state);
+    else await driveUpdateFile(driveFileId, state);
+    driveLastSync = new Date();
+    driveStatus = "connected"; driveErrorMsg = "";
+  }catch(err){
+    console.error("drive sync failed", err);
+    driveStatus = "error"; driveErrorMsg = String((err&&err.message)||err);
+  }
+  driveSyncInFlight = false;
+  render();
+  refreshSettingsIfOpen();
+}
+function refreshSettingsIfOpen(){ if(settingsSheetOpen) openSettings(); }
+function driveStatusNote(){
+  if(driveStatus==="connected"){
+    return "Connected — " + (driveLastSync ? "last synced "+driveLastSync.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) : "syncing…") + ". Entries saved on this device are pushed to the shared Drive file, and entries from other devices are pulled in automatically.";
+  }
+  if(driveStatus==="connecting") return "Connecting to Google…";
+  if(driveStatus==="error") return "Sync error: " + esc(driveErrorMsg) + ". Try Connect again.";
+  return "Not connected. The first person to connect creates the shared file — then share it (Editor access) with your teammates from Google Drive so their sign-in can sync to the same file.";
+}
+
 /* ================= GENERIC HELPERS ================= */
 function val(id){ const el = document.getElementById(id); return el ? el.value : ""; }
 function upsert(arrName, rec){
+  rec.updatedAt = Date.now();
   const arr = state[arrName];
   const idx = arr.findIndex(x=>x.id===rec.id);
   if(idx>=0) arr[idx]=rec; else arr.push(rec);
 }
 function deleteEntry(arrName, id){
-  state[arrName] = state[arrName].filter(x=>x.id!==id);
+  const rec = state[arrName].find(x=>x.id===id);
+  if(rec){ rec.deleted = true; rec.updatedAt = Date.now(); }
   closeSheet(); saveState(); render();
 }
 function fab(label, onclick){
@@ -1119,13 +1296,15 @@ function openSheet(html){
   document.getElementById('sheet').innerHTML = `<button class="close-x" onclick="closeSheet()">&times;</button>` + html;
   document.getElementById('sheetOverlay').style.display = 'flex';
 }
-function closeSheet(){ document.getElementById('sheetOverlay').style.display = 'none'; editing={type:null,id:null}; }
+function closeSheet(){ document.getElementById('sheetOverlay').style.display = 'none'; editing={type:null,id:null}; settingsSheetOpen=false; }
 
 /* ================= BOOT ================= */
 (async function init(){
   state = await loadState();
   if(!state.asOfDate) state.asOfDate = todayStr();
   setTab('dashboard');
+  setTimeout(driveTryAutoConnect, 400);
+  setInterval(()=>{ if(driveAccessToken) driveSyncNow(); }, 45000);
 })();
 </script>
 </body>
