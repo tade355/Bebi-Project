@@ -646,7 +646,32 @@ function renderDashboard(){
   }).join("");
   const legend = bva.map(r=>`<div class="item"><span class="dot rag-${ragClass(r.rag)}"></span>${esc(r.name)} · ${fmtPct(r.pct)}</div>`).join("");
 
+  const healthColor = h => h==="Critical" ? "var(--danger)" : h==="Watch" ? "var(--amber)" : "var(--leaf)";
+  const timePct = evm.plannedDuration>0 ? Math.min(100, (evm.daysElapsed/evm.plannedDuration)*100) : 0;
+  const workPct = (evm.overallProgress||0)*100;
+  const gap = workPct - timePct;
+  const gapText = Math.abs(gap)<0.5 ? "On pace with the schedule"
+    : gap<0 ? `${Math.abs(gap).toFixed(0)} points behind where the schedule expects`
+    : `${gap.toFixed(0)} points ahead of where the schedule expects`;
+
   return `
+    <div class="card">
+      <div class="card-title">Project Progress</div>
+      <div class="op-row">
+        <div class="op-head"><span class="name">Time Elapsed</span><span class="figs">${timePct.toFixed(0)}%</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${timePct}%; background:var(--dim);"></div></div>
+      </div>
+      <div class="op-row">
+        <div class="op-head"><span class="name">Work Done</span><span class="figs">${workPct.toFixed(1)}%</span></div>
+        <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,workPct)}%; background:${healthColor(evm.schedHealth)};"></div></div>
+      </div>
+      <div class="note" style="color:${healthColor(evm.schedHealth)};">${gapText}</div>
+      <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
+        <span class="chip ${ragClass(evm.schedHealth)}">Schedule: ${evm.schedHealth}</span>
+        <span class="chip ${ragClass(evm.costHealth)}">Cost: ${evm.costHealth}</span>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-title">Budget health · by cost head</div>
       <div class="strata-wrap">
