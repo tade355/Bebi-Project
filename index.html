@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="assets/chart.umd.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js"></script>
 <style>
   :root{
     --bg: #171D14;
@@ -304,10 +305,14 @@ let hasCloudStorage = (typeof window.storage !== "undefined" && window.storage !
 
 /* ---------------- Google Drive sync ---------------- */
 const GOOGLE_CLIENT_ID = "324095142444-8gcs36pstimaead3dc0vuas1d68noo1n.apps.googleusercontent.com";
-const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+const GOOGLE_API_KEY = ""; // Picker API key — required only for "Open Existing Shared Ledger"
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const DRIVE_FILE_NAME = "bebi-field-ledger-data.json";
 const DRIVE_AUTOCONNECT_KEY = "bebi-field-ledger-drive-autoconnect";
+const DRIVE_FILEID_KEY = "bebi-field-ledger-drive-fileid";
 let driveTokenClient = null;
+let drivePendingAction = "sync"; // "sync" | "picker"
+let pickerApiLoaded = false;
 let driveAccessToken = null;
 let driveFileId = null;
 let driveStatus = "disconnected"; // disconnected | connecting | connected | error
@@ -1633,7 +1638,8 @@ function openSettings(){
           <button class="btn btn-ghost" onclick="driveSyncNow()">Sync now</button>
           <button class="btn btn-danger" onclick="driveDisconnect()">Disconnect</button>
         ` : `
-          <button class="btn btn-primary" onclick="driveConnect()">${driveStatus==="connecting"?"Connecting…":"Connect Google Drive"}</button>
+          <button class="btn btn-primary" onclick="driveConnect()">${driveStatus==="connecting"?"Connecting…":"Create Shared Ledger"}</button>
+          <button class="btn btn-ghost" onclick="driveOpenExistingPicker()">Open Shared Ledger</button>
         `}
       </div>
     </div>
@@ -1718,7 +1724,8 @@ function driveEnsureTokenClient(){
       driveAccessToken = resp.access_token;
       try{ localStorage.setItem(DRIVE_AUTOCONNECT_KEY, "1"); }catch(e){}
       driveStatus = "connected";
-      driveSyncNow();
+      if(drivePendingAction==="picker") launchPicker();
+      else driveSyncNow();
     }
   });
   return driveTokenClient;
@@ -1728,14 +1735,60 @@ function driveConnect(){
     driveStatus = "error"; driveErrorMsg = "Google sign-in script didn't load — check your connection.";
     refreshSettingsIfOpen(); return;
   }
+  drivePendingAction = "sync";
   driveStatus = "connecting"; refreshSettingsIfOpen();
   driveEnsureTokenClient().requestAccessToken({prompt:"consent"});
+}
+function driveOpenExistingPicker(){
+  if(!GOOGLE_API_KEY){
+    alert("Picker isn't finished setting up yet — ask your developer to add the Google Picker API key.");
+    return;
+  }
+  if(typeof google === "undefined" || !google.accounts){
+    driveStatus = "error"; driveErrorMsg = "Google sign-in script didn't load — check your connection.";
+    refreshSettingsIfOpen(); return;
+  }
+  drivePendingAction = "picker";
+  driveStatus = "connecting"; refreshSettingsIfOpen();
+  driveEnsureTokenClient().requestAccessToken({prompt:"consent"});
+}
+function ensurePickerLoaded(cb){
+  if(typeof gapi === "undefined"){ cb(new Error("Google Picker script didn't load — check your connection.")); return; }
+  if(pickerApiLoaded){ cb(); return; }
+  gapi.load("picker", {callback: ()=>{ pickerApiLoaded = true; cb(); }});
+}
+function launchPicker(){
+  ensurePickerLoaded((err)=>{
+    if(err){ driveStatus="error"; driveErrorMsg=err.message; refreshSettingsIfOpen(); return; }
+    const view = new google.picker.DocsView(google.picker.ViewId.DOCS_SHARED_WITH_ME)
+      .setMimeTypes("application/json")
+      .setIncludeFolders(false);
+    const picker = new google.picker.PickerBuilder()
+      .setOAuthToken(driveAccessToken)
+      .setDeveloperKey(GOOGLE_API_KEY)
+      .addView(view)
+      .setCallback(pickerCallback)
+      .build();
+    picker.setVisible(true);
+  });
+}
+function pickerCallback(data){
+  if(data.action === google.picker.Action.PICKED){
+    driveFileId = data.docs[0].id;
+    try{ localStorage.setItem(DRIVE_FILEID_KEY, driveFileId); }catch(e){}
+    driveStatus = "connected";
+    driveSyncNow();
+  } else if(data.action === google.picker.Action.CANCEL){
+    driveStatus = "disconnected";
+    refreshSettingsIfOpen();
+  }
 }
 function driveTryAutoConnect(){
   let want = false;
   try{ want = localStorage.getItem(DRIVE_AUTOCONNECT_KEY)==="1"; }catch(e){}
   if(!want) return;
   if(typeof google === "undefined" || !google.accounts) return;
+  drivePendingAction = "sync";
   driveEnsureTokenClient().requestAccessToken({prompt:""});
 }
 function driveDisconnect(){
@@ -1743,7 +1796,7 @@ function driveDisconnect(){
     try{ google.accounts.oauth2.revoke(driveAccessToken, ()=>{}); }catch(e){}
   }
   driveAccessToken = null; driveFileId = null; driveStatus = "disconnected"; driveErrorMsg = ""; driveLastSync = null;
-  try{ localStorage.removeItem(DRIVE_AUTOCONNECT_KEY); }catch(e){}
+  try{ localStorage.removeItem(DRIVE_AUTOCONNECT_KEY); localStorage.removeItem(DRIVE_FILEID_KEY); }catch(e){}
   refreshSettingsIfOpen();
 }
 async function driveFindFile(){
@@ -1815,6 +1868,9 @@ async function driveSyncNow(){
   driveSyncInFlight = true;
   try{
     if(!driveFileId){
+      try{ driveFileId = localStorage.getItem(DRIVE_FILEID_KEY) || null; }catch(e){}
+    }
+    if(!driveFileId){
       const found = await driveFindFile();
       if(found) driveFileId = found.id;
     }
@@ -1824,6 +1880,7 @@ async function driveSyncNow(){
     await saveState();
     if(!driveFileId) driveFileId = await driveCreateFile(state);
     else await driveUpdateFile(driveFileId, state);
+    try{ localStorage.setItem(DRIVE_FILEID_KEY, driveFileId); }catch(e){}
     driveLastSync = new Date();
     driveStatus = "connected"; driveErrorMsg = "";
   }catch(err){
@@ -1840,8 +1897,8 @@ function driveStatusNote(){
     return "Connected — " + (driveLastSync ? "last synced "+driveLastSync.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) : "syncing…") + ". Entries saved on this device are pushed to the shared Drive file, and entries from other devices are pulled in automatically.";
   }
   if(driveStatus==="connecting") return "Connecting to Google…";
-  if(driveStatus==="error") return "Sync error: " + esc(driveErrorMsg) + ". Try Connect again.";
-  return "Not connected. The first person to connect creates the shared file — then share it (Editor access) with your teammates from Google Drive so their sign-in can sync to the same file.";
+  if(driveStatus==="error") return "Sync error: " + esc(driveErrorMsg) + ". Try again below.";
+  return "Not connected. If you're the first person setting this up, use \"Create Shared Ledger\" — then share the resulting file (Editor access) from Google Drive with your teammates. If a teammate already shared a ledger with you, use \"Open Shared Ledger\" and pick it from the list.";
 }
 
 /* ================= GENERIC HELPERS ================= */
